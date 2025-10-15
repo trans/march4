@@ -1,0 +1,8 @@
+-- Simple March program
+-- Defines a few basic words
+
+: double dup + ;
+
+: quadruple double double ;
+
+: square dup * ;
