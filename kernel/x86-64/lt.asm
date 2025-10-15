@@ -1,0 +1,20 @@
+; < ( a b -- flag )
+; Tests if a < b (signed comparison)
+; Stack effect: Pop two, push -1 (true) or 0 (false)
+
+section .text
+global op_lt
+
+op_lt:
+    ; rsi = data stack pointer
+    ; [rsi] = TOS (b)
+    ; [rsi+8] = second (a)
+
+    mov rax, [rsi + 8]      ; Load a
+    cmp rax, [rsi]          ; Compare a with b
+    setl al                 ; Set al to 1 if a < b (signed)
+    movzx rax, al           ; Zero-extend to 64-bit
+    neg rax                 ; Convert 1 to -1
+    add rsi, 8              ; Drop one item
+    mov [rsi], rax          ; Store flag
+    ret

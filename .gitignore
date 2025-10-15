@@ -1,0 +1,27 @@
+# Database files
+march.db
+*.db
+
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+
+# Rust
+runtime/target/
+runtime/Cargo.lock
+
+# OCaml
+compiler/_build/
+compiler/*.install
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
