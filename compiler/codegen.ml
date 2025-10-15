@@ -101,10 +101,8 @@ let cells_to_bytes cells =
   Buffer.contents buf
 
 (* Compute SHA256 hash (content ID) *)
-(* Note: This is a placeholder - in production use a real SHA256 library *)
 let compute_cid bytes =
-  let hash = Hashtbl.hash bytes in
-  Printf.sprintf "%016x%016x%016x%016x" hash hash hash hash
+  Digestif.SHA256.(to_hex (digest_string bytes))
 
 (* Generate code and compute CIDs *)
 let generate program =
