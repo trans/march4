@@ -1,0 +1,10 @@
+-- March program - type checking test
+
+-- add2: binary addition (for now without explicit signature)
+: add2 + ;
+
+-- Square: takes one value, duplicates and multiplies
+: square dup * ;
+
+-- Triple: takes one value, returns triple
+: triple dup dup + + ;

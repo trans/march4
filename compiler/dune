@@ -2,4 +2,4 @@
  (name main)
  (public_name marchc)
  (libraries sqlite3 unix)
- (modules main types lexer parser codegen database))
+ (modules main types lexer parser typecheck codegen database))

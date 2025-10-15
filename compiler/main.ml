@@ -3,6 +3,7 @@
 open Types
 open Lexer
 open Parser
+open Typecheck
 open Codegen
 open Database
 
@@ -11,8 +12,10 @@ let usage () =
   Printf.eprintf "Options:\n";
   Printf.eprintf "  -o <db>     Output database file (default: march.db)\n";
   Printf.eprintf "  -v          Verbose output\n";
+  Printf.eprintf "  -g          Debug mode (with type tracking)\n";
   Printf.eprintf "  --tokens    Show tokens and exit\n";
   Printf.eprintf "  --ast       Show AST and exit\n";
+  Printf.eprintf "  --types     Show type signatures and exit\n";
   exit 1
 
 let main () =
@@ -20,8 +23,10 @@ let main () =
   let db_file = ref "../march.db" in
   let schema_file = ref "../schema.sql" in
   let verbose = ref false in
+  let debug_mode = ref false in
   let show_tokens = ref false in
   let show_ast = ref false in
+  let show_types = ref false in
 
   (* Parse command line arguments *)
   let rec parse_args = function
@@ -32,11 +37,17 @@ let main () =
     | "-v" :: rest ->
         verbose := true;
         parse_args rest
+    | "-g" :: rest ->
+        debug_mode := true;
+        parse_args rest
     | "--tokens" :: rest ->
         show_tokens := true;
         parse_args rest
     | "--ast" :: rest ->
         show_ast := true;
+        parse_args rest
+    | "--types" :: rest ->
+        show_types := true;
         parse_args rest
     | file :: rest ->
         source_file := Some file;
@@ -79,6 +90,27 @@ let main () =
 
     if !verbose then
       Printf.printf "Parsed %d words\n" (List.length program.words);
+
+    (* Type checking *)
+    let type_env = create_env !debug_mode in
+    let type_sigs = check_program type_env program in
+
+    if !show_types then begin
+      Printf.printf "=== Type Signatures ===\n";
+      List.iter (fun (name, sig_entry) ->
+        Printf.printf "%s : %s -> %s\n"
+          name
+          (String.concat " " (List.map string_of_type sig_entry.sig_inputs))
+          (String.concat " " (List.map string_of_type sig_entry.sig_outputs))
+      ) type_sigs;
+      exit 0
+    end;
+
+    if !verbose then
+      Printf.printf "Type checked %d words\n" (List.length type_sigs);
+
+    if !debug_mode then
+      Printf.printf "Debug mode enabled - runtime type tracking active\n";
 
     (* Code generation *)
     let program_data = generate program in

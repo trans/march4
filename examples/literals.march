@@ -1,0 +1,9 @@
+-- March program with literals (these will type check!)
+
+: five 5 ;
+
+: seven 7 ;
+
+: twelve 5 7 + ;
+
+: twentyfour 12 dup + ;
