@@ -145,13 +145,38 @@
   ✓ Simple FORTH-style syntax: : name body ;
 
   ---
+  ✅ 8. VM Tests Complete (LNT Bug Fixed)
+
+  Date: 2025-10-18
+  Status: ✅ Complete
+
+  Fixed critical dispatch bug in VM that was preventing LNT from working.
+  The dispatcher was incorrectly jumping to LST handler when low 2 bits
+  were 10, without checking bit 2 to distinguish LST (010) from LNT (110).
+
+  Changes:
+  - vm.asm: Fixed dispatch to check bit 2 for tag 10
+  - test_vm.c: Added LNT test case (Test 6)
+  - Makefile: Removed runtime library dependency
+
+  All 6 VM tests now passing:
+  ✓ Test 1: Simple addition (5 + 3 = 8)
+  ✓ Test 2: Dup and add (10 dup + = 20)
+  ✓ Test 3: Complex expression ((7-3)*2 = 8)
+  ✓ Test 4: Equality test (5 = 5 = -1)
+  ✓ Test 5: Swap test (10 20 swap - = 10)
+  ✓ Test 6: LNT bulk literals ([LNT:2] 10 20 → stack: 20 10)
+
+  VM is now fully operational with 4-tag variable-bit encoding!
+
+  ---
   What's NOT Working Yet
 
   ❌ Input type inference - Can't infer : square dup * ; needs int64 → int64
   ❌ Loading/linking - Can't load compiled code from database and run it
-  ❌ VM tests - Linking issue with Rust runtime library
   ❌ Control flow: No IF/THEN/ELSE, loops, etc.
-  ❌ More literals - Only int64 literals, no strings/floats/etc.
+  ❌ String literals - Only int64 literals currently supported
+  ❌ Print primitive - No way to output strings yet
 
   ---
   Summary
