@@ -1,0 +1,13 @@
+-- Test new cell encoding with immediate literals
+-- Simple FORTH-style syntax: : name body ;
+
+: five 5 ;
+
+: ten 10 ;
+
+: fifteen five ten + ;
+
+-- Test LNT optimization with multiple literals
+: nums 1 2 3 4 5 ;
+
+: sum-nums nums + + + + ;

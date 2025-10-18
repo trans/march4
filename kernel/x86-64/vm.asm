@@ -7,12 +7,14 @@
 ;   rbx = Instruction pointer (IP) - points to current cell
 ;   rbp = VM context pointer (preserved)
 ;
-; Cell encoding (64-bit):
-;   Low 2 bits = tag:
-;     00 = XT    (execute word - jump to address)
-;     01 = EXIT  (return from word)
-;     10 = LIT   (next cell is literal value)
-;     11 = EXT   (extended instruction)
+; Cell encoding (64-bit) - Variable-bit tags:
+;   2-bit tags:
+;     00  = XT   (execute word, if addr=0 then EXIT)
+;     01  = LIT  (immediate 62-bit literal)
+;     10  = LST  (symbol ID literal)
+;   3-bit tags (when low 2 bits = 11):
+;     110 = LNT  (next N cells are raw literals)
+;     111 = EXT  (future extension)
 
 section .data
     align 8
@@ -96,31 +98,41 @@ vm_run:
     mov rcx, [rbx]              ; Load cell
     add rbx, 8                  ; Advance IP
 
-    ; Extract tag (low 2 bits)
+    ; Decode variable-bit tag
     mov rax, rcx
-    and rax, 0x3                ; Isolate tag
+    and rax, 0x3                ; Get low 2 bits
 
-    ; Dispatch on tag
+    ; Check for 3-bit tag (11)
+    cmp rax, 3
+    je .decode_3bit
+
+    ; 2-bit tags
     cmp rax, 0
     je .do_xt
     cmp rax, 1
-    je .do_exit
-    cmp rax, 2
     je .do_lit
-    cmp rax, 3
-    je .do_ext
-
-    ; Should never reach here
+    cmp rax, 2
+    je .do_lst
     jmp .error
 
+.decode_3bit:
+    ; Check bit 2 (0x4)
+    test rcx, 0x4
+    jz .do_lnt                  ; 110 = LNT
+    jmp .do_ext                 ; 111 = EXT
+
 ; ----------------------------------------------------------------------------
-; XT (00) - Execute word at address
+; XT (00) - Execute word at address (or EXIT if addr=0)
 ; ----------------------------------------------------------------------------
 .do_xt:
     ; Clear tag bits to get address
     and rcx, ~0x3               ; Mask off low 2 bits
 
-    ; Save IP on return stack and jump to word
+    ; Check for EXIT (address 0)
+    test rcx, rcx
+    jz .do_exit
+
+    ; Save IP on return stack and call word
     sub rdi, 8                  ; Allocate return stack slot
     mov [rdi], rbx              ; Save IP
 
@@ -134,7 +146,7 @@ vm_run:
     jmp .dispatch
 
 ; ----------------------------------------------------------------------------
-; EXIT (01) - Return from word
+; EXIT - Return from word (when XT addr=0)
 ; ----------------------------------------------------------------------------
 .do_exit:
     ; Check if return stack is at base (we're done)
@@ -151,12 +163,12 @@ vm_run:
     jmp .dispatch
 
 ; ----------------------------------------------------------------------------
-; LIT (10) - Push literal value
+; LIT (01) - Immediate 62-bit literal
 ; ----------------------------------------------------------------------------
 .do_lit:
-    ; Next cell contains the literal value
-    mov rax, [rbx]              ; Load literal
-    add rbx, 8                  ; Advance IP
+    ; Value is embedded in cell (upper 62 bits)
+    mov rax, rcx
+    sar rax, 2                  ; Sign-extend from 62 bits
 
     ; Push to data stack
     sub rsi, 8                  ; Allocate space
@@ -165,15 +177,47 @@ vm_run:
     jmp .dispatch
 
 ; ----------------------------------------------------------------------------
-; EXT (11) - Extended instruction
+; LST (10) - Symbol literal
 ; ----------------------------------------------------------------------------
-.do_ext:
-    ; Next cell contains the extended opcode
-    mov rax, [rbx]              ; Load extended opcode
+.do_lst:
+    ; Symbol ID is in upper 62 bits (unsigned)
+    mov rax, rcx
+    shr rax, 2                  ; Unsigned shift
+
+    ; Push to data stack
+    sub rsi, 8
+    mov [rsi], rax
+
+    jmp .dispatch
+
+; ----------------------------------------------------------------------------
+; LNT (110) - Next N cells are raw literals
+; ----------------------------------------------------------------------------
+.do_lnt:
+    ; Get count from upper 61 bits
+    mov rax, rcx
+    shr rax, 3                  ; Extract count (61 bits)
+    mov rdx, rax                ; rdx = counter
+
+.lnt_loop:
+    test rdx, rdx
+    jz .dispatch                ; Done with literals
+
+    mov rax, [rbx]              ; Load literal value
     add rbx, 8                  ; Advance IP
 
-    ; For now, just ignore (future extension point)
-    ; TODO: Implement extended instruction dispatch
+    sub rsi, 8                  ; Allocate stack space
+    mov [rsi], rax              ; Push to stack
+
+    dec rdx
+    jmp .lnt_loop
+
+; ----------------------------------------------------------------------------
+; EXT (111) - Future extension
+; ----------------------------------------------------------------------------
+.do_ext:
+    ; For now, just skip (NOP)
+    ; Future: dispatch on value in upper 61 bits
 
     jmp .dispatch
 

@@ -119,7 +119,49 @@ let main () =
       Printf.printf "Generated code:\n";
       List.iter (fun (name, cid, bytes, cells) ->
         Printf.printf "  %s: %s (%d cells, %d bytes)\n"
-          name cid (List.length cells) (String.length bytes)
+          name cid (List.length cells) (String.length bytes);
+        if !debug_mode then begin
+          Printf.printf "    Raw cells: %s\n"
+            (String.concat " " (List.map (Printf.sprintf "%Ld") cells));
+          Printf.printf "    Decoded: ";
+          let rec print_cells = function
+            | [] -> ()
+            | cell :: rest ->
+                let tag = Types.decode_tag cell in
+                match tag with
+                | Types.TagLNT ->
+                    let count = Types.decode_lnt cell in
+                    Printf.printf "[LNT:%Ld: " count;
+                    let rec print_n_lits n remaining =
+                      if n <= 0L then remaining
+                      else match remaining with
+                        | lit :: rest' ->
+                            Printf.printf "%Ld " lit;
+                            print_n_lits (Int64.sub n 1L) rest'
+                        | [] -> []
+                    in
+                    let rest' = print_n_lits count rest in
+                    Printf.printf "] ";
+                    print_cells rest'
+                | Types.TagXT when cell = 0L ->
+                    Printf.printf "[EXIT] ";
+                    print_cells rest
+                | Types.TagXT ->
+                    Printf.printf "[XT:%Ld] " (Types.decode_xt cell);
+                    print_cells rest
+                | Types.TagLIT ->
+                    Printf.printf "[LIT:%Ld] " (Types.decode_lit cell);
+                    print_cells rest
+                | Types.TagLST ->
+                    Printf.printf "[LST:%Ld] " (Types.decode_lst cell);
+                    print_cells rest
+                | Types.TagEXT ->
+                    Printf.printf "[EXT:%Ld] " (Types.decode_ext cell);
+                    print_cells rest
+          in
+          print_cells cells;
+          Printf.printf "\n"
+        end
       ) program_data
     end;
 

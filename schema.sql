@@ -203,6 +203,21 @@ CREATE INDEX idx_state_history_changed ON state_history(changed_at);
 
 
 -- ============================================================================
+-- SYMBOLS: Interned symbols for type literals and metaprogramming
+-- ============================================================================
+-- Maps symbol names to integer IDs for use in LST (symbol literal) tokens.
+-- Used for type system, metaprogramming, and debugging.
+
+CREATE TABLE symbols (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX idx_symbols_name ON symbols(name);
+
+
+-- ============================================================================
 -- METADATA: System configuration and versioning
 -- ============================================================================
 -- Stores schema version and other system-level metadata.
