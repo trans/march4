@@ -9,6 +9,7 @@ CARGO = cargo
 
 # Flags
 NASMFLAGS = -f elf64 -g -F dwarf
+NASMFLAGS_PIC = -f elf64 -g -F dwarf -DPIC
 CFLAGS = -Wall -Wextra -g -O0
 LDFLAGS = -no-pie
 
@@ -23,13 +24,23 @@ RUNTIME_LIB = $(RUNTIME_DIR)/target/release/libmarch_runtime.a
 # Source files
 ASM_SOURCES = $(wildcard $(KERNEL_DIR)/*.asm)
 ASM_OBJECTS = $(patsubst $(KERNEL_DIR)/%.asm,$(BUILD_DIR)/%.o,$(ASM_SOURCES))
+ASM_PIC_OBJECTS = $(patsubst $(KERNEL_DIR)/%.asm,$(BUILD_DIR)/%-pic.o,$(ASM_SOURCES))
 
 # Targets
 TEST_PROGRAM = $(BUILD_DIR)/test_vm
+VM_LIB = $(BUILD_DIR)/libmarch_vm.a
 
-.PHONY: all clean test dirs runtime clean-runtime
+.PHONY: all clean test dirs runtime clean-runtime vmlib
 
-all: dirs runtime $(TEST_PROGRAM)
+all: dirs runtime $(TEST_PROGRAM) vmlib
+
+# Build VM static library for OCaml FFI (with PIC)
+vmlib: $(VM_LIB)
+
+$(VM_LIB): $(ASM_PIC_OBJECTS)
+	@echo "Creating VM static library (PIC)..."
+	@ar rcs $@ $(ASM_PIC_OBJECTS)
+	@echo "Built $@"
 
 dirs:
 	@mkdir -p $(BUILD_DIR)
@@ -38,6 +49,11 @@ dirs:
 $(BUILD_DIR)/%.o: $(KERNEL_DIR)/%.asm
 	@echo "Assembling $<..."
 	@$(NASM) $(NASMFLAGS) $< -o $@
+
+# Compile assembly files with PIC (for OCaml FFI)
+$(BUILD_DIR)/%-pic.o: $(KERNEL_DIR)/%.asm
+	@echo "Assembling $< (PIC)..."
+	@$(NASM) $(NASMFLAGS_PIC) $< -o $@
 
 # Compile C test program
 $(BUILD_DIR)/test_vm.o: test_vm.c

@@ -31,6 +31,7 @@ section .text
     global vm_halt
     global vm_get_dsp
     global vm_get_rsp
+    global data_stack_base
 
 ; ============================================================================
 ; vm_init - Initialize the VM
@@ -41,13 +42,13 @@ vm_init:
     mov rbp, rsp
 
     ; Initialize data stack pointer (top of stack)
-    lea rax, [data_stack_base]
+    lea rax, [rel data_stack_base]
     add rax, 8 * 1024           ; Point to end of stack area
     sub rax, 8                  ; Back up one slot
     mov [rel data_stack_top], rax
 
     ; Initialize return stack pointer
-    lea rax, [return_stack_base]
+    lea rax, [rel return_stack_base]
     add rax, 8 * 1024
     sub rax, 8
     mov [rel return_stack_top], rax
@@ -146,7 +147,7 @@ vm_run:
 ; ----------------------------------------------------------------------------
 .do_exit:
     ; Check if return stack is at base (we're done)
-    lea rax, [return_stack_base]
+    lea rax, [rel return_stack_base]
     add rax, 8 * 1024
     sub rax, 8
     cmp rdi, rax

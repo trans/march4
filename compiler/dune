@@ -9,3 +9,17 @@
  (public_name marchload)
  (libraries sqlite3)
  (modules marchload database loader))
+
+(library
+ (name vm_lib)
+ (modules vm_ffi)
+ (foreign_archives march_vm)
+ (foreign_stubs
+  (language c)
+  (names vm_stubs)))
+
+(executable
+ (name marchrun)
+ (public_name marchrun)
+ (libraries sqlite3 vm_lib)
+ (modules marchrun database loader))
