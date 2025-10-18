@@ -179,18 +179,81 @@
   ❌ Print primitive - No way to output strings yet
 
   ---
+  ✅ 9. C Compiler Transition (In Progress)
+
+  Date: 2025-10-18
+  Status: 🚧 In Progress
+
+  **Decision:** Rewrite compiler in C for true FORTH architecture.
+
+  **Why:**
+  - OCaml's strengths (ADTs, pattern matching) pull toward AST/tree traversal
+  - FORTH compiles token-stream, one-pass (no AST!)
+  - C is natural fit: simple, imperative, direct VM integration
+  - Eliminates FFI complexity
+
+  **Completed (src/ directory):**
+  - ✅ types.h - Core type definitions
+  - ✅ cells.c/.h - Cell encoding/decoding (27 tests passing)
+  - ✅ tokens.c/.h - Token stream reader (no AST!)
+  - ✅ dictionary.c/.h - Hash table + overload resolution (29 tests passing)
+  - ✅ database.c/.h - SQLite integration with SHA256 (36 tests passing)
+  - ✅ primitives.c/.h - Register 39 assembly ops (53 tests passing)
+  - ✅ compiler.c/.h - One-pass compiler core (37 tests passing)
+  - ✅ test_framework.h - Simple assertion-based testing
+  - ✅ Makefile - Build system with test runner
+
+  **All 182 tests passing!**
+
+  **Architecture:**
+  - One-pass compilation (read token → compile immediately)
+  - Type stack (compile-time only, not runtime)
+  - Dictionary-driven (primitives + user words)
+  - Overload resolution via type signature matching
+  - Direct SQLite C API (no bindings)
+  - SHA256 content-addressable storage
+  - Direct VM calls (no FFI layer)
+
+  **Compiler Features:**
+  - Token stream compilation (no AST!)
+  - Compile-time type checking with shadow type stack
+  - Literal emission (LIT cells)
+  - Primitive word calls (XT cells with addresses)
+  - User word definitions (: name body ;)
+  - Type signature inference from stack state
+  - Database storage with SHA256 CIDs
+  - Dictionary integration for cross-word references
+
+  **Pending:**
+  - loader.c/.h - Load + link words from database
+  - runner.c - Execute compiled code (direct vm_run call)
+  - marchc.c - Main entry point
+
+  **Plan:**
+  Keep OCaml compiler in compiler/ as reference, build C version in src/.
+  Once C compiler is working, make it default.
+
+  ---
   Summary
 
   Working:
-  - 40 assembly primitives
-  - Complete bootstrap compiler
-  - Type checking with overload resolution
+  - 39 assembly primitives in x86-64 assembly
+  - VM with 4-tag variable-bit encoding (XT/LIT/LST/LNT/EXT)
+  - OCaml bootstrap compiler (functional, uses AST)
+  - OCaml loader + runner (via FFI)
+  - **C compiler core complete! (182 tests passing)**
+    - Token stream compilation (no AST!)
+    - Compile-time type checking
+    - Database integration with SHA256
+    - Primitive registration
+    - User word definitions
   - Real SHA256 content-addressable storage
   - SQLite database integration
 
   Next Critical Features:
-  1. Stack effect analysis for input type inference
-  2. Linking/loading - execute compiled code from database
+  1. Word linking/relocation for inter-word calls
+  2. Runner integration (load from DB → execute on VM)
   3. Control flow syntax and compilation
-  
+  4. Main CLI tool (marchc)
+
 
