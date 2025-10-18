@@ -102,24 +102,20 @@ vm_run:
     mov rax, rcx
     and rax, 0x3                ; Get low 2 bits
 
-    ; Check for 3-bit tag (11)
-    cmp rax, 3
-    je .decode_3bit
-
-    ; 2-bit tags
+    ; Dispatch on low 2 bits
     cmp rax, 0
-    je .do_xt
+    je .do_xt                   ; 00 = XT
     cmp rax, 1
-    je .do_lit
+    je .do_lit                  ; 01 = LIT
     cmp rax, 2
-    je .do_lst
-    jmp .error
+    je .decode_10               ; 10 = LST or LNT (check bit 2)
+    jmp .do_ext                 ; 11 = EXT
 
-.decode_3bit:
-    ; Check bit 2 (0x4)
-    test rcx, 0x4
-    jz .do_lnt                  ; 110 = LNT
-    jmp .do_ext                 ; 111 = EXT
+.decode_10:
+    ; Low 2 bits are 10, check bit 2 to distinguish LST from LNT
+    test rcx, 0x4               ; Check bit 2
+    jz .do_lst                  ; 010 = LST
+    jmp .do_lnt                 ; 110 = LNT
 
 ; ----------------------------------------------------------------------------
 ; XT (00) - Execute word at address (or EXIT if addr=0)

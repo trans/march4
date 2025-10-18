@@ -51,10 +51,10 @@ $(RUNTIME_LIB):
 	@echo "Building Rust runtime..."
 	@cd $(RUNTIME_DIR) && $(CARGO) build --release
 
-# Link everything together
-$(TEST_PROGRAM): $(BUILD_DIR)/test_vm.o $(ASM_OBJECTS) $(RUNTIME_LIB)
+# Link everything together (without runtime for now - not needed for VM tests)
+$(TEST_PROGRAM): $(BUILD_DIR)/test_vm.o $(ASM_OBJECTS)
 	@echo "Linking $@..."
-	@$(LD) $(LDFLAGS) $(BUILD_DIR)/test_vm.o $(ASM_OBJECTS) -L$(RUNTIME_DIR)/target/release -lmarch_runtime -lpthread -ldl -o $@
+	@$(LD) $(LDFLAGS) $(BUILD_DIR)/test_vm.o $(ASM_OBJECTS) -o $@
 	@echo "Build complete: $@"
 
 # Run tests

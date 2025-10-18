@@ -23,11 +23,12 @@ extern void op_drop(void);
 extern void op_swap(void);
 extern void op_eq(void);
 
-// Cell tag constants
-#define TAG_XT   0  // Execute word
-#define TAG_EXIT 1  // Return
-#define TAG_LIT  2  // Literal
-#define TAG_EXT  3  // Extended
+// Cell tag constants - New 4-tag variable-bit encoding
+#define TAG_XT   0x0  // Execute word (EXIT if addr=0)
+#define TAG_LIT  0x1  // Immediate 62-bit literal
+#define TAG_LST  0x2  // Symbol literal
+#define TAG_LNT  0x6  // Next N literals (110 binary)
+#define TAG_EXT  0x7  // Extension (111 binary)
 
 // Helper to create tagged cells
 static inline uint64_t make_xt(void* addr) {
@@ -35,11 +36,17 @@ static inline uint64_t make_xt(void* addr) {
 }
 
 static inline uint64_t make_exit(void) {
-    return TAG_EXIT;
+    return 0;  // EXIT is now XT(0)
 }
 
-static inline uint64_t make_lit(void) {
-    return TAG_LIT;
+static inline uint64_t make_lit(int64_t value) {
+    // Embed 62-bit signed value in upper bits, tag=01
+    return ((uint64_t)value << 2) | TAG_LIT;
+}
+
+static inline uint64_t make_lnt(uint64_t count) {
+    // Embed count in upper 61 bits, tag=110
+    return (count << 3) | TAG_LNT;
 }
 
 // Test 1: Simple arithmetic: 5 3 + (should leave 8)
@@ -48,10 +55,10 @@ void test_simple_add(void) {
     printf("Program: 5 3 +\n");
 
     uint64_t program[] = {
-        make_lit(), 5,      // Push 5
-        make_lit(), 3,      // Push 3
+        make_lit(5),        // Push 5 (single cell!)
+        make_lit(3),        // Push 3 (single cell!)
         make_xt(op_add),    // Add them
-        make_exit()         // Exit
+        make_exit()         // EXIT (XT with addr=0)
     };
 
     vm_init();
@@ -70,7 +77,7 @@ void test_dup_add(void) {
     printf("Program: 10 dup +\n");
 
     uint64_t program[] = {
-        make_lit(), 10,     // Push 10
+        make_lit(10),       // Push 10 (single cell!)
         make_xt(op_dup),    // Duplicate it (10 10)
         make_xt(op_add),    // Add them (20)
         make_exit()
@@ -93,10 +100,10 @@ void test_complex(void) {
     printf("Expected: (7 - 3) * 2 = 8\n");
 
     uint64_t program[] = {
-        make_lit(), 7,      // Push 7
-        make_lit(), 3,      // Push 3
+        make_lit(7),        // Push 7 (single cell!)
+        make_lit(3),        // Push 3 (single cell!)
         make_xt(op_sub),    // Subtract (4)
-        make_lit(), 2,      // Push 2
+        make_lit(2),        // Push 2 (single cell!)
         make_xt(op_mul),    // Multiply (8)
         make_exit()
     };
@@ -117,8 +124,8 @@ void test_comparison(void) {
     printf("Program: 5 5 =\n");
 
     uint64_t program[] = {
-        make_lit(), 5,      // Push 5
-        make_lit(), 5,      // Push 5
+        make_lit(5),        // Push 5 (single cell!)
+        make_lit(5),        // Push 5 (single cell!)
         make_xt(op_eq),     // Compare (should be -1/true)
         make_exit()
     };
@@ -140,8 +147,8 @@ void test_swap(void) {
     printf("Expected: 20 - 10 = 10\n");
 
     uint64_t program[] = {
-        make_lit(), 10,     // Push 10
-        make_lit(), 20,     // Push 20
+        make_lit(10),       // Push 10 (single cell!)
+        make_lit(20),       // Push 20 (single cell!)
         make_xt(op_swap),   // Swap (now 10 on top, 20 below)
         make_xt(op_sub),    // Subtract: 20 - 10 = 10
         make_exit()
@@ -157,15 +164,69 @@ void test_swap(void) {
     printf("Test %s\n", result == 10 ? "PASSED" : "FAILED");
 }
 
+// Test 6: LNT (bulk literals): Push 1 2 3 4 5
+void test_lnt_literals(void) {
+    printf("\n=== Test 6: LNT Bulk Literals ===\n");
+    printf("Program: [LNT:2] 10 20\n");
+    printf("Expected: Stack should have 10 20\n");
+
+    uint64_t program[] = {
+        make_lnt(2),        // Next 2 cells are raw literals
+        10, 20,             // Raw 64-bit values (no tags!)
+        make_exit()
+    };
+
+    printf("Program array:\n");
+    for (int i = 0; i < 4; i++) {
+        printf("  [%d] = 0x%lx\n", i, program[i]);
+    }
+    fflush(stdout);
+
+    vm_init();
+    printf("Running VM...\n"); fflush(stdout);
+    vm_run(program);
+    printf("VM returned\n"); fflush(stdout);
+
+    uint64_t* dsp = vm_get_dsp();
+
+    // Stack grows downward, so check from top (dsp[0]) to bottom
+    int passed = 1;
+    uint64_t expected[] = {20, 10};  // Reversed because stack grows down
+
+    printf("Stack contents: ");
+    for (int i = 0; i < 2; i++) {
+        printf("%lu ", dsp[i]);
+        if (dsp[i] != expected[i]) {
+            passed = 0;
+        }
+    }
+    printf("\n");
+
+    printf("Test %s\n", passed ? "PASSED" : "FAILED");
+}
+
 int main(void) {
     printf("March VM Test Suite\n");
     printf("===================\n");
+    fflush(stdout);
 
+    printf("Starting test 1...\n"); fflush(stdout);
     test_simple_add();
+
+    printf("Starting test 2...\n"); fflush(stdout);
     test_dup_add();
+
+    printf("Starting test 3...\n"); fflush(stdout);
     test_complex();
+
+    printf("Starting test 4...\n"); fflush(stdout);
     test_comparison();
+
+    printf("Starting test 5...\n"); fflush(stdout);
     test_swap();
+
+    printf("Starting test 6...\n"); fflush(stdout);
+    test_lnt_literals();
 
     printf("\n===================\n");
     printf("All tests complete!\n");
