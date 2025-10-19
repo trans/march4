@@ -17,6 +17,10 @@ typedef struct {
     int output_count;
 } type_sig_t;
 
+/* Forward declaration for immediate handler */
+typedef struct compiler compiler_t;
+typedef bool (*immediate_handler_t)(compiler_t* comp);
+
 /* Dictionary entry (word definition) */
 typedef struct dict_entry {
     char* name;              /* Word name */
@@ -24,6 +28,8 @@ typedef struct dict_entry {
     char* cid;               /* Content ID (for user words) or NULL */
     type_sig_t signature;    /* Type signature */
     bool is_primitive;       /* true = asm primitive, false = user word */
+    bool is_immediate;       /* true = compile-time word (like if, true, false) */
+    immediate_handler_t handler; /* Handler for immediate words or NULL */
     int priority;            /* For overload resolution (higher = more specific) */
     struct dict_entry* next; /* Hash table chain */
 } dict_entry_t;
@@ -41,7 +47,8 @@ void dict_free(dictionary_t* dict);
 
 /* Add word to dictionary */
 bool dict_add(dictionary_t* dict, const char* name, void* addr,
-              const char* cid, type_sig_t* sig, bool is_primitive);
+              const char* cid, type_sig_t* sig, bool is_primitive,
+              bool is_immediate, immediate_handler_t handler);
 
 /* Lookup word by name (returns first match) */
 dict_entry_t* dict_lookup(dictionary_t* dict, const char* name);

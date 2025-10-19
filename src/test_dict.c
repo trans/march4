@@ -31,11 +31,11 @@ int main(void) {
     /* Test adding words */
     type_sig_t add_sig;
     parse_type_sig("i64 i64 -> i64", &add_sig);
-    ASSERT(dict_add(dict, "+", (void*)0x1000, NULL, &add_sig, true));
+    ASSERT(dict_add(dict, "+", (void*)0x1000, NULL, &add_sig, true, false, NULL));
 
     type_sig_t dup_sig;
     parse_type_sig("i64 -> i64 i64", &dup_sig);
-    ASSERT(dict_add(dict, "dup", (void*)0x2000, NULL, &dup_sig, true));
+    ASSERT(dict_add(dict, "dup", (void*)0x2000, NULL, &dup_sig, true, false, NULL));
 
     /* Test lookup */
     dict_entry_t* entry = dict_lookup(dict, "+");
@@ -60,7 +60,7 @@ int main(void) {
     /* Add overloaded word */
     type_sig_t add_f64_sig;
     parse_type_sig("f64 f64 -> f64", &add_f64_sig);
-    ASSERT(dict_add(dict, "+", (void*)0x3000, NULL, &add_f64_sig, true));
+    ASSERT(dict_add(dict, "+", (void*)0x3000, NULL, &add_f64_sig, true, false, NULL));
 
     /* Lookup should now pick the right overload */
     type_id_t i64_stack[8] = {TYPE_I64, TYPE_I64};

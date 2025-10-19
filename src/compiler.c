@@ -12,6 +12,8 @@
 
 /* Forward declarations */
 static bool compile_if(compiler_t* comp);
+static bool compile_true(compiler_t* comp);
+static bool compile_false(compiler_t* comp);
 
 /* Create compiler */
 compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
@@ -44,7 +46,28 @@ void compiler_free(compiler_t* comp) {
 
 /* Register primitives */
 void compiler_register_primitives(compiler_t* comp) {
+    type_sig_t sig;
+
+    /* Register assembly primitives */
     register_primitives(comp->dict);
+
+    /* Register immediate (compile-time) words */
+
+    /* if: ( flag quot_true quot_false -- ... ) */
+    /* Type checking handled dynamically based on quotations */
+    parse_type_sig("->", &sig);  /* Minimal signature - real checking in handler */
+    dict_add(comp->dict, "if", NULL, NULL, &sig, false, true,
+             (immediate_handler_t)compile_if);
+
+    /* true: ( -- -1 ) */
+    parse_type_sig("-> i64", &sig);
+    dict_add(comp->dict, "true", NULL, NULL, &sig, false, true,
+             (immediate_handler_t)compile_true);
+
+    /* false: ( -- 0 ) */
+    parse_type_sig("-> i64", &sig);
+    dict_add(comp->dict, "false", NULL, NULL, &sig, false, true,
+             (immediate_handler_t)compile_false);
 }
 
 /* Push type onto type stack */
@@ -111,18 +134,31 @@ static bool compile_number(compiler_t* comp, int64_t num) {
 
 /* Compile a word reference */
 static bool compile_word(compiler_t* comp, const char* name) {
-    /* Check for immediate (compile-time) words */
-    if (strcmp(name, "if") == 0) {
-        return compile_if(comp);
-    }
-
-    /* Lookup word with type checking */
-    dict_entry_t* entry = dict_lookup_typed(comp->dict, name,
-                                            comp->type_stack,
-                                            comp->type_stack_depth);
+    /* Lookup word (may be immediate, primitive, or user word) */
+    dict_entry_t* entry = dict_lookup(comp->dict, name);
 
     if (!entry) {
         fprintf(stderr, "Unknown word: %s\n", name);
+        return false;
+    }
+
+    /* Check if this is an immediate (compile-time) word */
+    if (entry->is_immediate) {
+        if (!entry->handler) {
+            fprintf(stderr, "Internal error: immediate word '%s' has no handler\n", name);
+            return false;
+        }
+        /* Call the immediate handler */
+        return entry->handler(comp);
+    }
+
+    /* Not immediate - do type-aware lookup for overload resolution */
+    entry = dict_lookup_typed(comp->dict, name,
+                             comp->type_stack,
+                             comp->type_stack_depth);
+
+    if (!entry) {
+        fprintf(stderr, "Type error: no matching overload for word: %s\n", name);
         return false;
     }
 
@@ -343,6 +379,30 @@ static bool compile_if(compiler_t* comp) {
     return true;
 }
 
+/* Immediate word: true - emit literal -1 */
+static bool compile_true(compiler_t* comp) {
+    cell_buffer_append(comp->cells, encode_lit(-1));
+    push_type(comp, TYPE_I64);
+
+    if (comp->verbose) {
+        printf("  LIT -1 (true)\n");
+    }
+
+    return true;
+}
+
+/* Immediate word: false - emit literal 0 */
+static bool compile_false(compiler_t* comp) {
+    cell_buffer_append(comp->cells, encode_lit(0));
+    push_type(comp, TYPE_I64);
+
+    if (comp->verbose) {
+        printf("  LIT 0 (false)\n");
+    }
+
+    return true;
+}
+
 /* Compile a word definition */
 static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     /* Read word name */
@@ -483,7 +543,7 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     /* Add to dictionary so it can be used in later definitions */
     type_sig_t sig;
     if (parse_type_sig(type_sig, &sig)) {
-        dict_add(comp->dict, word_name, NULL, NULL, &sig, false);
+        dict_add(comp->dict, word_name, NULL, NULL, &sig, false, false, NULL);
     }
 
     free(source_text);

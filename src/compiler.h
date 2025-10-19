@@ -24,7 +24,7 @@ typedef struct {
 } quotation_t;
 
 /* Compiler state */
-typedef struct {
+typedef struct compiler {
     dictionary_t* dict;
     march_db_t* db;
     type_id_t type_stack[MAX_TYPE_STACK];
