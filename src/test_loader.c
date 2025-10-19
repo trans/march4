@@ -1,5 +1,8 @@
 /*
  * March Language - Loader and Runner Tests
+ *
+ * Note: This test links with the real VM library (build/libmarch_vm.a)
+ * so it uses real assembly primitives, not stubs!
  */
 
 #include "test_framework.h"
@@ -11,46 +14,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-/* Stub primitives (we link with real VM) */
-void op_dup(void) {}
-void op_drop(void) {}
-void op_swap(void) {}
-void op_over(void) {}
-void op_rot(void) {}
-void op_add(void) {}
-void op_sub(void) {}
-void op_mul(void) {}
-void op_div(void) {}
-void op_mod(void) {}
-void op_eq(void) {}
-void op_ne(void) {}
-void op_lt(void) {}
-void op_gt(void) {}
-void op_le(void) {}
-void op_ge(void) {}
-void op_and(void) {}
-void op_or(void) {}
-void op_xor(void) {}
-void op_not(void) {}
-void op_lshift(void) {}
-void op_rshift(void) {}
-void op_arshift(void) {}
-void op_land(void) {}
-void op_lor(void) {}
-void op_lnot(void) {}
-void op_zerop(void) {}
-void op_zerogt(void) {}
-void op_zerolt(void) {}
-void op_fetch(void) {}
-void op_store(void) {}
-void op_cfetch(void) {}
-void op_cstore(void) {}
-void op_tor(void) {}
-void op_fromr(void) {}
-void op_rfetch(void) {}
-void op_rdrop(void) {}
-void op_twotor(void) {}
-void op_twofromr(void) {}
+/* Real primitives are in build/libmarch_vm.a - no stubs needed! */
 
 int main(void) {
     TEST_SUITE("Loader and Runner");
@@ -140,8 +104,12 @@ int main(void) {
     ASSERT_EQ(depth, 1);
     ASSERT_EQ(stack[0], 10);
 
-    /* Note: 'twenty' uses the + primitive which is stubbed in this test
-     * Real primitive testing is done separately with full VM linkage */
+    /* Test 11: Execute 'twenty' with real + primitive */
+    vm_init();  /* Reset VM */
+    ASSERT(runner_execute(runner, "twenty"));
+    depth = runner_get_stack(runner, stack, 10);
+    ASSERT_EQ(depth, 1);
+    ASSERT_EQ(stack[0], 20);  /* Should be 10 + 10 = 20 with real primitive! */
 
     /* Clean up */
     runner_free(runner);

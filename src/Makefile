@@ -17,7 +17,11 @@ VM_LIB = ../build/libmarch_vm.a
 
 .PHONY: all clean test
 
-all: $(CORE_OBJS)
+all: $(CORE_OBJS) marchc
+
+# Main compiler executable
+marchc: marchc.c $(CORE_OBJS) $(VM_LIB)
+	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
 # Core objects
 %.o: %.c %.h types.h
@@ -59,4 +63,4 @@ test: test_cells test_dict test_database test_primitives test_compiler test_load
 	@echo "\nAll tests complete!"
 
 clean:
-	rm -f *.o $(TEST_BINS)
+	rm -f *.o $(TEST_BINS) marchc
