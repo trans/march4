@@ -9,12 +9,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* Cell tags - 4-tag variable-bit encoding */
+/* Cell tags - variable-bit encoding */
 #define TAG_XT   0x0  /* 00  - Execute word (EXIT if addr=0) */
 #define TAG_LIT  0x1  /* 01  - Immediate 62-bit signed literal */
-#define TAG_LST  0x2  /* 10  - Symbol ID literal */
+#define TAG_LST  0x2  /* 010 - Symbol ID literal */
 #define TAG_LNT  0x6  /* 110 - Next N literals (raw 64-bit values) */
-#define TAG_EXT  0x7  /* 111 - Extension */
 
 /* Cell type */
 typedef uint64_t cell_t;

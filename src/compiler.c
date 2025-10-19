@@ -10,6 +10,9 @@
 #include <string.h>
 #include <stdio.h>
 
+/* Forward declarations */
+static bool compile_if(compiler_t* comp);
+
 /* Create compiler */
 compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     compiler_t* comp = malloc(sizeof(compiler_t));
@@ -20,6 +23,8 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     comp->type_stack_depth = 0;
     comp->cells = cell_buffer_create();
     comp->verbose = false;
+    comp->quot_stack_depth = 0;
+    comp->buffer_stack_depth = 0;
 
     if (!comp->cells) {
         free(comp);
@@ -106,6 +111,11 @@ static bool compile_number(compiler_t* comp, int64_t num) {
 
 /* Compile a word reference */
 static bool compile_word(compiler_t* comp, const char* name) {
+    /* Check for immediate (compile-time) words */
+    if (strcmp(name, "if") == 0) {
+        return compile_if(comp);
+    }
+
     /* Lookup word with type checking */
     dict_entry_t* entry = dict_lookup_typed(comp->dict, name,
                                             comp->type_stack,
@@ -137,6 +147,197 @@ static bool compile_word(compiler_t* comp, const char* name) {
         printf("  XT %s", name);
         print_type_sig(&entry->signature);
         printf("\n");
+    }
+
+    return true;
+}
+
+/* Start quotation - save current state and begin new compilation */
+static bool compile_lparen(compiler_t* comp) {
+    if (comp->quot_stack_depth >= MAX_QUOT_DEPTH) {
+        fprintf(stderr, "Quotation nesting too deep (max %d)\n", MAX_QUOT_DEPTH);
+        return false;
+    }
+
+    /* Create new quotation */
+    quotation_t* quot = malloc(sizeof(quotation_t));
+    if (!quot) return false;
+
+    quot->cells = cell_buffer_create();
+    if (!quot->cells) {
+        free(quot);
+        return false;
+    }
+
+    /* Capture current type stack as quotation inputs */
+    quot->input_count = comp->type_stack_depth;
+    for (int i = 0; i < comp->type_stack_depth; i++) {
+        quot->inputs[i] = comp->type_stack[i];
+    }
+
+    /* Push quotation onto stack */
+    comp->quot_stack[comp->quot_stack_depth++] = quot;
+
+    /* Save current buffer and switch to quotation buffer */
+    comp->buffer_stack[comp->buffer_stack_depth++] = comp->cells;
+    comp->cells = quot->cells;
+
+    /* Reset type stack for quotation body */
+    comp->type_stack_depth = 0;
+
+    if (comp->verbose) {
+        printf("  ( start quotation\n");
+    }
+
+    return true;
+}
+
+/* End quotation - finalize and push onto quotation stack */
+static bool compile_rparen(compiler_t* comp) {
+    if (comp->quot_stack_depth == 0) {
+        fprintf(stderr, "Unmatched ')' - no quotation in progress\n");
+        return false;
+    }
+
+    if (comp->buffer_stack_depth == 0) {
+        fprintf(stderr, "Internal error: buffer stack empty in rparen\n");
+        return false;
+    }
+
+    /* Get current quotation */
+    quotation_t* quot = comp->quot_stack[comp->quot_stack_depth - 1];
+
+    /* Emit EXIT */
+    cell_buffer_append(quot->cells, encode_exit());
+
+    /* Capture output types */
+    quot->output_count = comp->type_stack_depth;
+    for (int i = 0; i < comp->type_stack_depth; i++) {
+        quot->outputs[i] = comp->type_stack[i];
+    }
+
+    /* Restore parent buffer */
+    comp->cells = comp->buffer_stack[--comp->buffer_stack_depth];
+
+    /* Restore type stack (quotation inputs + outputs become new stack) */
+    comp->type_stack_depth = quot->input_count;
+    for (int i = 0; i < quot->input_count; i++) {
+        comp->type_stack[i] = quot->inputs[i];
+    }
+
+    if (comp->verbose) {
+        printf("  ) end quotation: ");
+        for (int i = 0; i < quot->input_count; i++) {
+            printf("%d ", quot->inputs[i]);
+        }
+        printf("-> ");
+        for (int i = 0; i < quot->output_count; i++) {
+            printf("%d ", quot->outputs[i]);
+        }
+        printf(" (%zu cells)\n", quot->cells->count);
+    }
+
+    /* Note: quotation stays on quot_stack for immediate word to consume */
+
+    return true;
+}
+
+/* Pop quotation from stack (for use by immediate words) */
+static quotation_t* pop_quotation(compiler_t* comp) {
+    if (comp->quot_stack_depth == 0) {
+        return NULL;
+    }
+    return comp->quot_stack[--comp->quot_stack_depth];
+}
+
+/* Immediate word: if - compile conditional branch with inlined quotations */
+static bool compile_if(compiler_t* comp) {
+    /* Stack should be: flag ( true ) ( false ) if */
+    /* Pop two quotations (in reverse order: false, then true) */
+
+    if (comp->quot_stack_depth < 2) {
+        fprintf(stderr, "if requires two quotations: ( true ) ( false )\n");
+        return false;
+    }
+
+    quotation_t* false_quot = pop_quotation(comp);
+    quotation_t* true_quot = pop_quotation(comp);
+
+    if (!false_quot || !true_quot) {
+        fprintf(stderr, "Internal error: quotations not available for if\n");
+        return false;
+    }
+
+    /* Check that flag is on type stack */
+    if (comp->type_stack_depth < 1) {
+        fprintf(stderr, "if requires a boolean flag on stack\n");
+        return false;
+    }
+
+    /* Pop flag type */
+    pop_type(comp);
+
+    if (comp->verbose) {
+        printf("  IF compiling with true=%zu cells, false=%zu cells\n",
+               true_quot->cells->count, false_quot->cells->count);
+    }
+
+    /* Look up branch primitives */
+    dict_entry_t* zbranch_entry = dict_lookup(comp->dict, "0branch");
+    dict_entry_t* branch_entry = dict_lookup(comp->dict, "branch");
+
+    if (!zbranch_entry || !branch_entry) {
+        fprintf(stderr, "Internal error: branch primitives not registered\n");
+        return false;
+    }
+
+    /* Emit 0BRANCH primitive XT and placeholder offset */
+    /* Pattern: [XT: 0branch] [LIT: offset] */
+    cell_buffer_append(comp->cells, encode_xt(zbranch_entry->addr));
+    size_t zbranch_offset_pos = comp->cells->count;
+    cell_buffer_append(comp->cells, encode_lit(0));  /* Placeholder offset */
+
+    /* Inline true quotation cells (minus EXIT) */
+    for (size_t i = 0; i < true_quot->cells->count - 1; i++) {  /* -1 to skip EXIT */
+        cell_buffer_append(comp->cells, true_quot->cells->cells[i]);
+    }
+
+    /* Emit BRANCH primitive XT and placeholder offset */
+    /* Pattern: [XT: branch] [LIT: offset] */
+    cell_buffer_append(comp->cells, encode_xt(branch_entry->addr));
+    size_t branch_offset_pos = comp->cells->count;
+    cell_buffer_append(comp->cells, encode_lit(0));  /* Placeholder offset */
+
+    /* Calculate 0BRANCH offset: points to start of false branch */
+    /* Offset is in cells from the cell AFTER the offset LIT */
+    int64_t zbranch_offset = (int64_t)(comp->cells->count - zbranch_offset_pos - 1);
+    comp->cells->cells[zbranch_offset_pos] = encode_lit(zbranch_offset);
+
+    /* Inline false quotation cells (minus EXIT) */
+    for (size_t i = 0; i < false_quot->cells->count - 1; i++) {  /* -1 to skip EXIT */
+        cell_buffer_append(comp->cells, false_quot->cells->cells[i]);
+    }
+
+    /* Calculate BRANCH offset: points past end of false branch */
+    /* Offset is in cells from the cell AFTER the offset LIT */
+    int64_t branch_offset = (int64_t)(comp->cells->count - branch_offset_pos - 1);
+    comp->cells->cells[branch_offset_pos] = encode_lit(branch_offset);
+
+    /* Apply quotation output types to current stack */
+    /* Both branches should have same output types - use true_quot */
+    for (int i = 0; i < true_quot->output_count; i++) {
+        push_type(comp, true_quot->outputs[i]);
+    }
+
+    /* Free quotations */
+    cell_buffer_free(true_quot->cells);
+    free(true_quot);
+    cell_buffer_free(false_quot->cells);
+    free(false_quot);
+
+    if (comp->verbose) {
+        printf("  IF compiled: 0branch offset=%lld, branch offset=%lld\n",
+               (long long)zbranch_offset, (long long)branch_offset);
     }
 
     return true;
@@ -212,6 +413,10 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
             success = compile_number(comp, tok.number);
         } else if (tok.type == TOK_WORD) {
             success = compile_word(comp, tok.text);
+        } else if (tok.type == TOK_LPAREN) {
+            success = compile_lparen(comp);
+        } else if (tok.type == TOK_RPAREN) {
+            success = compile_rparen(comp);
         } else {
             fprintf(stderr, "Unexpected token in definition: %s\n", tok.text);
         }

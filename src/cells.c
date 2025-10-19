@@ -36,8 +36,8 @@ int decode_tag(cell_t cell) {
     int low2 = cell & 0x3;
 
     if (low2 == 3) {
-        /* 11 - check bit 2 for LNT/EXT */
-        return (cell & 0x4) ? TAG_EXT : TAG_LNT;
+        /* 11 - Reserved (currently unused) */
+        return 0;  /* Invalid tag */
     } else if (low2 == 2) {
         /* 10 - check bit 2 for LST/LNT */
         return (cell & 0x4) ? TAG_LNT : TAG_LST;

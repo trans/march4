@@ -47,6 +47,8 @@ void op_rfetch(void) {}
 void op_rdrop(void) {}
 void op_twotor(void) {}
 void op_twofromr(void) {}
+void op_branch(void) {}
+void op_0branch(void) {}
 
 int main(void) {
     TEST_SUITE("Primitive Registration");
@@ -173,7 +175,7 @@ int main(void) {
             e = e->next;
         }
     }
-    ASSERT_EQ(count, 39);
+    ASSERT_EQ(count, 41);  /* 39 + branch + 0branch */
 
     dict_free(dict);
 

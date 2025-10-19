@@ -99,4 +99,11 @@ void register_primitives(dictionary_t* dict) {
 
     parse_type_sig("-> i64 i64", &sig);
     dict_add(dict, "2r>", &op_twofromr, NULL, &sig, true);
+
+    /* Control flow */
+    parse_type_sig("->", &sig);
+    dict_add(dict, "branch", &op_branch, NULL, &sig, true);
+
+    parse_type_sig("i64 ->", &sig);
+    dict_add(dict, "0branch", &op_0branch, NULL, &sig, true);
 }

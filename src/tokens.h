@@ -18,6 +18,8 @@ typedef enum {
     TOK_WORD,        /* Word/identifier */
     TOK_COLON,       /* : (start definition) */
     TOK_SEMICOLON,   /* ; (end definition) */
+    TOK_LPAREN,      /* ( (start quotation) */
+    TOK_RPAREN,      /* ) (end quotation) */
     TOK_COMMENT,     /* -- comment (skip) */
 } token_type_t;
 

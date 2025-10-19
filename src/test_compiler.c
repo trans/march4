@@ -51,6 +51,8 @@ void op_rfetch(void) {}
 void op_rdrop(void) {}
 void op_twotor(void) {}
 void op_twofromr(void) {}
+void op_branch(void) {}
+void op_0branch(void) {}
 
 int main(void) {
     TEST_SUITE("One-Pass Compiler");

@@ -62,6 +62,10 @@ extern void op_rdrop(void);
 extern void op_twotor(void);
 extern void op_twofromr(void);
 
+/* Control flow */
+extern void op_branch(void);
+extern void op_0branch(void);
+
 /* Register all primitives in dictionary */
 void register_primitives(dictionary_t* dict);
 

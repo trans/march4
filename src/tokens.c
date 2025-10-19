@@ -112,6 +112,10 @@ static bool read_word(token_stream_t* stream, token_t* token) {
         token->type = TOK_COLON;
     } else if (strcmp(buffer, ";") == 0) {
         token->type = TOK_SEMICOLON;
+    } else if (strcmp(buffer, "(") == 0) {
+        token->type = TOK_LPAREN;
+    } else if (strcmp(buffer, ")") == 0) {
+        token->type = TOK_RPAREN;
     } else if (strcmp(buffer, "--") == 0) {
         /* Comment - skip to end of line */
         while ((c = fgetc(stream->file)) != EOF && c != '\n') {

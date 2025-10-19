@@ -210,12 +210,10 @@ vm_run:
     jmp .lnt_loop
 
 ; ----------------------------------------------------------------------------
-; EXT (111) - Future extension
+; 011 and 111 tags - Reserved for future use
 ; ----------------------------------------------------------------------------
 .do_ext:
     ; For now, just skip (NOP)
-    ; Future: dispatch on value in upper 61 bits
-
     jmp .dispatch
 
 ; ----------------------------------------------------------------------------
