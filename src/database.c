@@ -42,6 +42,23 @@ void db_close(march_db_t* db) {
 
 /* Initialize schema from SQL file */
 bool db_init_schema(march_db_t* db, const char* schema_file) {
+    /* Check if schema already exists */
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db->db,
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='words';",
+        -1, &stmt, NULL);
+
+    if (rc == SQLITE_OK) {
+        rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc == SQLITE_ROW) {
+            /* Schema already exists */
+            return true;
+        }
+    }
+
+    /* Schema doesn't exist, create it */
     FILE* f = fopen(schema_file, "r");
     if (!f) {
         fprintf(stderr, "Cannot open schema file: %s\n", schema_file);
@@ -65,7 +82,7 @@ bool db_init_schema(march_db_t* db, const char* schema_file) {
 
     /* Execute SQL */
     char* err_msg = NULL;
-    int rc = sqlite3_exec(db->db, sql, NULL, NULL, &err_msg);
+    rc = sqlite3_exec(db->db, sql, NULL, NULL, &err_msg);
     free(sql);
 
     if (rc != SQLITE_OK) {
@@ -133,9 +150,9 @@ bool db_store_word(march_db_t* db, const char* name, const char* namespace,
         return false;
     }
 
-    /* Insert word */
+    /* Insert or replace word (handles recompilation of same word) */
     const char* word_sql =
-        "INSERT INTO words (name, namespace, def_cid, type_sig, is_primitive) "
+        "INSERT OR REPLACE INTO words (name, namespace, def_cid, type_sig, is_primitive) "
         "VALUES (?, ?, ?, ?, 0);";
 
     rc = sqlite3_prepare_v2(db->db, word_sql, -1, &stmt, NULL);

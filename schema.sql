@@ -52,7 +52,8 @@ CREATE TABLE words (
     CHECK (is_primitive IN (0, 1)),
     CHECK (is_immediate IN (0, 1)),
     CHECK ((is_primitive = 0 AND architecture IS NULL) OR
-           (is_primitive = 1 AND architecture IS NOT NULL))
+           (is_primitive = 1 AND architecture IS NOT NULL)),
+    UNIQUE (name, namespace, type_sig)  -- Prevent duplicates, allow overloading
 );
 
 -- Efficient lookups by name and namespace
