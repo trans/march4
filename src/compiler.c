@@ -168,6 +168,16 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     cell_buffer_clear(comp->cells);
     comp->type_stack_depth = 0;
 
+    /* Build source text as we compile */
+    char* source_text = malloc(4096);  /* Initial buffer */
+    if (!source_text) {
+        free(word_name);
+        return false;
+    }
+    source_text[0] = '\0';
+    size_t source_len = 0;
+    size_t source_cap = 4096;
+
     /* Compile tokens until ';' */
     token_t tok;
     while (token_stream_next(stream, &tok)) {
@@ -175,6 +185,26 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
             token_free(&tok);
             break;
         }
+
+        /* Append token text to source (with space separator) */
+        size_t tok_len = strlen(tok.text);
+        size_t needed = source_len + tok_len + 2;  /* +2 for space and null */
+        if (needed > source_cap) {
+            source_cap = needed * 2;
+            char* new_buf = realloc(source_text, source_cap);
+            if (!new_buf) {
+                free(source_text);
+                free(word_name);
+                token_free(&tok);
+                return false;
+            }
+            source_text = new_buf;
+        }
+        if (source_len > 0) {
+            source_text[source_len++] = ' ';
+        }
+        strcpy(source_text + source_len, tok.text);
+        source_len += tok_len;
 
         bool success = false;
 
@@ -189,6 +219,7 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
         token_free(&tok);
 
         if (!success) {
+            free(source_text);
             free(word_name);
             return false;
         }
@@ -221,18 +252,21 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
 
     if (comp->verbose) {
         printf("  Type signature: %s\n", type_sig);
+        printf("  Source: %s\n", source_text);
         printf("  %zu cells, %zu bytes\n",
                comp->cells->count, comp->cells->count * 8);
     }
 
-    /* Store in database */
+    /* Store in database with source text */
     bool stored = db_store_word(comp->db, word_name, "user",
                                 (uint8_t*)comp->cells->cells,
                                 comp->cells->count,
-                                type_sig);
+                                type_sig,
+                                source_text);
 
     if (!stored) {
         fprintf(stderr, "Failed to store word: %s\n", word_name);
+        free(source_text);
         free(word_name);
         return false;
     }
@@ -247,6 +281,7 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
         dict_add(comp->dict, word_name, NULL, NULL, &sig, false);
     }
 
+    free(source_text);
     free(word_name);
     return true;
 }

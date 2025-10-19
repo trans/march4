@@ -113,11 +113,18 @@ char* compute_sha256(const uint8_t* data, size_t len) {
 
 /* Store compiled word in database */
 bool db_store_word(march_db_t* db, const char* name, const char* namespace,
-                   const uint8_t* cells, size_t cell_count, const char* type_sig) {
+                   const uint8_t* cells, size_t cell_count, const char* type_sig,
+                   const char* source_text) {
     /* Compute CID */
     size_t byte_count = cell_count * sizeof(uint64_t);
     char* cid = compute_sha256(cells, byte_count);
     if (!cid) return false;
+
+    /* Compute source hash if source text provided */
+    char* source_hash = NULL;
+    if (source_text) {
+        source_hash = compute_sha256((uint8_t*)source_text, strlen(source_text));
+    }
 
     /* Start transaction */
     sqlite3_exec(db->db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
@@ -133,6 +140,7 @@ bool db_store_word(march_db_t* db, const char* name, const char* namespace,
         fprintf(stderr, "Failed to prepare blob insert: %s\n", sqlite3_errmsg(db->db));
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
         free(cid);
+        if (source_hash) free(source_hash);
         return false;
     }
 
@@ -147,6 +155,7 @@ bool db_store_word(march_db_t* db, const char* name, const char* namespace,
         fprintf(stderr, "Failed to insert blob: %s\n", sqlite3_errmsg(db->db));
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
         free(cid);
+        if (source_hash) free(source_hash);
         return false;
     }
 
@@ -160,6 +169,7 @@ bool db_store_word(march_db_t* db, const char* name, const char* namespace,
         fprintf(stderr, "Failed to prepare word insert: %s\n", sqlite3_errmsg(db->db));
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
         free(cid);
+        if (source_hash) free(source_hash);
         return false;
     }
 
@@ -175,12 +185,46 @@ bool db_store_word(march_db_t* db, const char* name, const char* namespace,
         fprintf(stderr, "Failed to insert word: %s\n", sqlite3_errmsg(db->db));
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
         free(cid);
+        if (source_hash) free(source_hash);
         return false;
+    }
+
+    /* Insert or replace defs entry with source text */
+    if (source_text) {
+        const char* defs_sql =
+            "INSERT OR REPLACE INTO defs "
+            "(cid, bytecode_version, source_text, source_hash) "
+            "VALUES (?, 1, ?, ?);";
+
+        rc = sqlite3_prepare_v2(db->db, defs_sql, -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            fprintf(stderr, "Failed to prepare defs insert: %s\n", sqlite3_errmsg(db->db));
+            sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
+            free(cid);
+            if (source_hash) free(source_hash);
+            return false;
+        }
+
+        sqlite3_bind_text(stmt, 1, cid, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, source_text, -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 3, source_hash, -1, SQLITE_STATIC);
+
+        rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc != SQLITE_DONE) {
+            fprintf(stderr, "Failed to insert defs: %s\n", sqlite3_errmsg(db->db));
+            sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
+            free(cid);
+            if (source_hash) free(source_hash);
+            return false;
+        }
     }
 
     /* Commit transaction */
     sqlite3_exec(db->db, "COMMIT;", NULL, NULL, NULL);
     free(cid);
+    if (source_hash) free(source_hash);
     return true;
 }
 

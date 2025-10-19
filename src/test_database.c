@@ -40,7 +40,7 @@ int main(void) {
         encode_lit(5),
         encode_exit()
     };
-    ASSERT(db_store_word(db, "five", "test", (uint8_t*)cells1, 2, "-> i64"));
+    ASSERT(db_store_word(db, "five", "test", (uint8_t*)cells1, 2, "-> i64", "5"));
 
     /* Test 5: Load word back */
     size_t count = 0;
@@ -58,7 +58,7 @@ int main(void) {
         encode_lit(30),
         encode_exit()
     };
-    ASSERT(db_store_word(db, "three_nums", "test", (uint8_t*)cells2, 4, "-> i64 i64 i64"));
+    ASSERT(db_store_word(db, "three_nums", "test", (uint8_t*)cells2, 4, "-> i64 i64 i64", "10 20 30"));
 
     /* Test 7: Load multi-cell word */
     loaded = db_load_word(db, "three_nums", "test", &count);
@@ -76,7 +76,7 @@ int main(void) {
         1, 2, 3,  /* Raw 64-bit values */
         encode_exit()
     };
-    ASSERT(db_store_word(db, "lnt_test", "test", (uint8_t*)cells3, 5, "-> i64 i64 i64"));
+    ASSERT(db_store_word(db, "lnt_test", "test", (uint8_t*)cells3, 5, "-> i64 i64 i64", "1 2 3"));
 
     /* Test 9: Load LNT word */
     loaded = db_load_word(db, "lnt_test", "test", &count);
@@ -91,7 +91,7 @@ int main(void) {
     free(loaded);
 
     /* Test 10: Store duplicate word (same CID, new entry) */
-    ASSERT(db_store_word(db, "five_copy", "test", (uint8_t*)cells1, 2, "-> i64"));
+    ASSERT(db_store_word(db, "five_copy", "test", (uint8_t*)cells1, 2, "-> i64", "5"));
 
     /* Test 11: Load by different name (same cells) */
     loaded = db_load_word(db, "five_copy", "test", &count);
@@ -106,7 +106,7 @@ int main(void) {
     ASSERT(loaded == NULL);
 
     /* Test 13: Store word with default namespace */
-    ASSERT(db_store_word(db, "default_ns", NULL, (uint8_t*)cells1, 2, "-> i64"));
+    ASSERT(db_store_word(db, "default_ns", NULL, (uint8_t*)cells1, 2, "-> i64", "5"));
 
     /* Test 14: Load from default namespace */
     loaded = db_load_word(db, "default_ns", NULL, &count);
