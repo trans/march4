@@ -71,10 +71,15 @@
   Tables:
   - blobs - Content-addressable binary data (SHA256 CIDs)
   - words - Named definitions with type signatures
-  - defs - Compiled code metadata
+  - defs - Compiled code metadata (source_text, source_hash)
   - edges - Dependency graph for GC
   - modules - Program/library organization
   - state - Global variables (immutable snapshots)
+
+  Recent updates (2025-10-19):
+  - Added UNIQUE(name, namespace, type_sig) constraint on words table
+  - INSERT OR REPLACE for recompilation without duplicates
+  - Source code storage in defs table with SHA256 hash
 
   Status: Complete, in use by compiler
 
@@ -177,6 +182,7 @@
   ❌ Control flow: No IF/THEN/ELSE, loops, etc.
   ❌ String literals - Only int64 literals currently supported
   ❌ Print primitive - No way to output strings yet
+  ❌ edges table - Not populated yet (needed for dependency tracking and GC)
 
   Note: Words with only literals and primitives work perfectly!
   Example: : answer 21 21 + ; → 42 ✓
