@@ -14,6 +14,7 @@
 static bool compile_if(compiler_t* comp);
 static bool compile_true(compiler_t* comp);
 static bool compile_false(compiler_t* comp);
+static bool materialize_quotations(compiler_t* comp);
 
 /* Create compiler */
 compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
@@ -27,6 +28,7 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     comp->verbose = false;
     comp->quot_stack_depth = 0;
     comp->buffer_stack_depth = 0;
+    comp->quot_counter = 0;
 
     if (!comp->cells) {
         free(comp);
@@ -150,6 +152,13 @@ static bool compile_word(compiler_t* comp, const char* name) {
         }
         /* Call the immediate handler */
         return entry->handler(comp);
+    }
+
+    /* Not immediate - materialize any pending quotations first */
+    if (comp->quot_stack_depth > 0) {
+        if (!materialize_quotations(comp)) {
+            return false;
+        }
     }
 
     /* Not immediate - do type-aware lookup for overload resolution */
@@ -284,6 +293,81 @@ static quotation_t* pop_quotation(compiler_t* comp) {
         return NULL;
     }
     return comp->quot_stack[--comp->quot_stack_depth];
+}
+
+/* Materialize pending quotations as runtime values */
+static bool materialize_quotations(compiler_t* comp) {
+    while (comp->quot_stack_depth > 0) {
+        quotation_t* quot = pop_quotation(comp);
+        if (!quot) return false;
+
+        /* Generate unique name for quotation */
+        char quot_name[64];
+        snprintf(quot_name, sizeof(quot_name), "_q%d", comp->quot_counter++);
+
+        /* Build type signature: inputs -> outputs */
+        char type_sig[256];
+        char* p = type_sig;
+
+        /* Input types */
+        for (int i = 0; i < quot->input_count; i++) {
+            switch (quot->inputs[i]) {
+                case TYPE_I64: p += sprintf(p, "i64 "); break;
+                case TYPE_U64: p += sprintf(p, "u64 "); break;
+                case TYPE_F64: p += sprintf(p, "f64 "); break;
+                case TYPE_PTR: p += sprintf(p, "ptr "); break;
+                case TYPE_BOOL: p += sprintf(p, "bool "); break;
+                default: p += sprintf(p, "? "); break;
+            }
+        }
+
+        /* Arrow */
+        p += sprintf(p, "-> ");
+
+        /* Output types */
+        for (int i = 0; i < quot->output_count; i++) {
+            switch (quot->outputs[i]) {
+                case TYPE_I64: p += sprintf(p, "i64 "); break;
+                case TYPE_U64: p += sprintf(p, "u64 "); break;
+                case TYPE_F64: p += sprintf(p, "f64 "); break;
+                case TYPE_PTR: p += sprintf(p, "ptr "); break;
+                case TYPE_BOOL: p += sprintf(p, "bool "); break;
+                default: p += sprintf(p, "? "); break;
+            }
+        }
+
+        if (comp->verbose) {
+            printf("  Materializing quotation %s: %s\n", quot_name, type_sig);
+        }
+
+        /* Store quotation as anonymous word */
+        bool stored = db_store_word(comp->db, quot_name, "user",
+                                    (uint8_t*)quot->cells->cells,
+                                    quot->cells->count,
+                                    type_sig,
+                                    NULL);  /* No source text for anonymous quotations */
+
+        if (!stored) {
+            fprintf(stderr, "Failed to store quotation\n");
+            cell_buffer_free(quot->cells);
+            free(quot);
+            return false;
+        }
+
+        /* TODO: Emit proper reference to quotation address */
+        /* For now, emit [LIT 0] as placeholder - needs linking */
+        cell_buffer_append(comp->cells, encode_lit(0));
+        fprintf(stderr, "Warning: quotation linking not yet implemented: %s\n", quot_name);
+
+        /* Push quotation type onto stack (as pointer for now) */
+        push_type(comp, TYPE_PTR);
+
+        /* Free quotation */
+        cell_buffer_free(quot->cells);
+        free(quot);
+    }
+
+    return true;
 }
 
 /* Immediate word: if - compile conditional branch with inlined quotations */
@@ -484,6 +568,15 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
         token_free(&tok);
 
         if (!success) {
+            free(source_text);
+            free(word_name);
+            return false;
+        }
+    }
+
+    /* Materialize any pending quotations before ending definition */
+    if (comp->quot_stack_depth > 0) {
+        if (!materialize_quotations(comp)) {
             free(source_text);
             free(word_name);
             return false;

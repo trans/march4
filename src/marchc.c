@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
     }
 
     /* Initialize schema if new database */
-    if (!db_init_schema(db, "../schema.sql")) {
+    if (!db_init_schema(db, "schema.sql")) {
         /* Schema might already exist, that's okay */
     }
 

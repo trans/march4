@@ -39,6 +39,9 @@ typedef struct compiler {
     /* Buffer stack for nested quotations */
     cell_buffer_t* buffer_stack[MAX_QUOT_DEPTH + 1];  /* +1 for root */
     int buffer_stack_depth;
+
+    /* Runtime quotation counter for generating unique names */
+    int quot_counter;
 } compiler_t;
 
 /* Create/free compiler */
