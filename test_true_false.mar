@@ -1,0 +1,13 @@
+-- Test true and false immediate words
+
+: test_true
+  true
+;
+
+: test_false
+  false
+;
+
+: test_with_if
+  true ( 42 ) ( 99 ) if
+;

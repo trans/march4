@@ -1,0 +1,6 @@
+-- Test runtime quotations
+
+-- Simple word that returns a quotation (no inputs, outputs one i64)
+: get_quot
+  ( 42 )
+;
