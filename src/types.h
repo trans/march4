@@ -15,6 +15,13 @@
 #define TAG_LST  0x2  /* 010 - Symbol ID literal */
 #define TAG_LNT  0x6  /* 110 - Next N literals (raw 64-bit values) */
 
+/* Blob kind identifiers (for database storage) */
+#define BLOB_CODE       1    /* Cell stream (compiled word/quotation) */
+#define BLOB_STRING     2    /* UTF-8 string data */
+#define BLOB_ARRAY      3    /* Array header (count + element sig_cid) */
+#define BLOB_STRUCT     4    /* Struct data (field values) */
+#define BLOB_BINARY     5    /* Raw binary data (untyped) */
+
 /* Cell type */
 typedef uint64_t cell_t;
 

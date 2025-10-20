@@ -7,6 +7,30 @@
 PRAGMA foreign_keys = ON;
 
 -- ============================================================================
+-- TYPE_SIGNATURES: Deduplicated type signature definitions
+-- ============================================================================
+-- Stores unique type signatures for code and data.
+-- Content-addressable by signature hash.
+-- Examples:
+--   sig_cid = SHA256("i64 i64|i64")    → input="i64 i64"  output="i64"     (add function)
+--   sig_cid = SHA256("|i64")           → input=""         output="i64"     (integer literal)
+--   sig_cid = SHA256("|string")        → input=""         output="string"  (string literal)
+--   sig_cid = SHA256("|[i64]")         → input=""         output="[i64]"   (array literal)
+--   sig_cid = SHA256("i64|bool")       → input="i64"      output="bool"    (predicate)
+
+CREATE TABLE type_signatures (
+    sig_cid     TEXT PRIMARY KEY,           -- SHA256("input_sig|output_sig")
+    input_sig   TEXT NOT NULL DEFAULT '',   -- Input types (e.g., "i64 i64", "" for data)
+    output_sig  TEXT NOT NULL,              -- Output types (e.g., "i64", "string", "[i64]")
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+
+    CHECK (length(sig_cid) = 64)
+);
+
+CREATE INDEX idx_type_sigs_io ON type_signatures(input_sig, output_sig);
+
+
+-- ============================================================================
 -- BLOBS: Content-addressable binary data
 -- ============================================================================
 -- Stores all content-addressable data: compiled code streams, serialized
@@ -15,12 +39,14 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE blobs (
     cid         TEXT PRIMARY KEY,  -- SHA256 hash of content (hex encoded)
-    kind        INTEGER NOT NULL,  -- Type/format identifier
+    kind        INTEGER NOT NULL,  -- Type/format identifier (BLOB_CODE, BLOB_STRING, etc.)
+    sig_cid     TEXT,              -- Type signature reference (NULL for untyped blobs)
     flags       INTEGER NOT NULL DEFAULT 0,  -- Metadata flags
     len         INTEGER NOT NULL,  -- Length in bytes
     data        BLOB NOT NULL,     -- The actual binary content
     created_at  INTEGER NOT NULL DEFAULT (unixepoch()),  -- Timestamp
 
+    FOREIGN KEY (sig_cid) REFERENCES type_signatures(sig_cid) ON DELETE RESTRICT,
     CHECK (length(cid) = 64),      -- SHA256 is 64 hex chars
     CHECK (len = length(data))     -- Enforce consistency
 );
@@ -72,14 +98,16 @@ CREATE INDEX idx_words_type ON words(type_sig);
 CREATE TABLE defs (
     cid             TEXT PRIMARY KEY,  -- CID of this definition (references blobs)
     bytecode_version INTEGER NOT NULL DEFAULT 1,  -- Bytecode format version
-    stack_effect    TEXT,              -- Stack effect notation (e.g., "( a b -- c )")
+    sig_cid         TEXT,              -- Type signature reference
     is_pure         INTEGER NOT NULL DEFAULT 0,   -- 1 if side-effect free
+    effects         INTEGER NOT NULL DEFAULT 0,   -- Effect flags: IO=1, ERR=2, etc.
     escapes         INTEGER NOT NULL DEFAULT 0,   -- 1 if captures/escapes values
     source_text     TEXT,              -- Original source code (optional)
     source_hash     TEXT,              -- Hash of source (for change detection)
     compiled_at     INTEGER NOT NULL DEFAULT (unixepoch()),
 
     FOREIGN KEY (cid) REFERENCES blobs(cid) ON DELETE CASCADE,
+    FOREIGN KEY (sig_cid) REFERENCES type_signatures(sig_cid) ON DELETE RESTRICT,
     CHECK (is_pure IN (0, 1)),
     CHECK (escapes IN (0, 1))
 );
@@ -252,8 +280,9 @@ SELECT
     w.def_cid,
     b.len as code_len,
     d.bytecode_version,
-    d.stack_effect,
+    d.sig_cid,
     d.is_pure,
+    d.effects,
     d.source_text
 FROM words w
 JOIN blobs b ON w.def_cid = b.cid
