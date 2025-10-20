@@ -29,6 +29,7 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     comp->quot_stack_depth = 0;
     comp->buffer_stack_depth = 0;
     comp->quot_counter = 0;
+    comp->pending_quot_count = 0;
 
     if (!comp->cells) {
         free(comp);
@@ -42,6 +43,10 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
 void compiler_free(compiler_t* comp) {
     if (comp) {
         cell_buffer_free(comp->cells);
+        /* Free pending quotation CIDs */
+        for (int i = 0; i < comp->pending_quot_count; i++) {
+            free(comp->pending_quot_cids[i]);
+        }
         free(comp);
     }
 }
@@ -301,15 +306,13 @@ static bool materialize_quotations(compiler_t* comp) {
         quotation_t* quot = pop_quotation(comp);
         if (!quot) return false;
 
-        /* Generate unique name for quotation */
-        char quot_name[64];
-        snprintf(quot_name, sizeof(quot_name), "_q%d", comp->quot_counter++);
-
-        /* Build type signature: inputs -> outputs */
-        char type_sig[256];
-        char* p = type_sig;
+        /* Build type signature strings: inputs -> outputs */
+        char input_sig[128] = "";
+        char output_sig[128] = "";
+        char* p;
 
         /* Input types */
+        p = input_sig;
         for (int i = 0; i < quot->input_count; i++) {
             switch (quot->inputs[i]) {
                 case TYPE_I64: p += sprintf(p, "i64 "); break;
@@ -320,11 +323,11 @@ static bool materialize_quotations(compiler_t* comp) {
                 default: p += sprintf(p, "? "); break;
             }
         }
-
-        /* Arrow */
-        p += sprintf(p, "-> ");
+        /* Trim trailing space */
+        if (p > input_sig && p[-1] == ' ') p[-1] = '\0';
 
         /* Output types */
+        p = output_sig;
         for (int i = 0; i < quot->output_count; i++) {
             switch (quot->outputs[i]) {
                 case TYPE_I64: p += sprintf(p, "i64 "); break;
@@ -335,29 +338,57 @@ static bool materialize_quotations(compiler_t* comp) {
                 default: p += sprintf(p, "? "); break;
             }
         }
+        /* Trim trailing space */
+        if (p > output_sig && p[-1] == ' ') p[-1] = '\0';
 
-        if (comp->verbose) {
-            printf("  Materializing quotation %s: %s\n", quot_name, type_sig);
-        }
-
-        /* Store quotation as anonymous word */
-        bool stored = db_store_word(comp->db, quot_name, "user",
-                                    (uint8_t*)quot->cells->cells,
-                                    quot->cells->count,
-                                    type_sig,
-                                    NULL);  /* No source text for anonymous quotations */
-
-        if (!stored) {
-            fprintf(stderr, "Failed to store quotation\n");
+        /* Store type signature and get sig_cid */
+        char* sig_cid = db_store_type_sig(comp->db,
+                                          input_sig[0] ? input_sig : NULL,
+                                          output_sig);
+        if (!sig_cid) {
+            fprintf(stderr, "Failed to store quotation type signature\n");
             cell_buffer_free(quot->cells);
             free(quot);
             return false;
         }
 
+        if (comp->verbose) {
+            printf("  Materializing quotation: %s -> %s\n",
+                   input_sig[0] ? input_sig : "(none)", output_sig);
+        }
+
+        /* Store quotation as anonymous blob */
+        size_t byte_count = quot->cells->count * sizeof(uint64_t);
+        char* cid = db_store_blob(comp->db, BLOB_CODE, sig_cid,
+                                  (uint8_t*)quot->cells->cells,
+                                  byte_count);
+        free(sig_cid);
+
+        if (!cid) {
+            fprintf(stderr, "Failed to store quotation blob\n");
+            cell_buffer_free(quot->cells);
+            free(quot);
+            return false;
+        }
+
+        /* Track CID for linking */
+        if (comp->pending_quot_count >= MAX_QUOT_REFS) {
+            fprintf(stderr, "Too many quotation references in word (max %d)\n", MAX_QUOT_REFS);
+            free(cid);
+            cell_buffer_free(quot->cells);
+            free(quot);
+            return false;
+        }
+        comp->pending_quot_cids[comp->pending_quot_count++] = cid;
+
+        if (comp->verbose) {
+            printf("  Quotation CID: %s (index %d)\n", cid, comp->pending_quot_count - 1);
+        }
+
         /* TODO: Emit proper reference to quotation address */
         /* For now, emit [LIT 0] as placeholder - needs linking */
         cell_buffer_append(comp->cells, encode_lit(0));
-        fprintf(stderr, "Warning: quotation linking not yet implemented: %s\n", quot_name);
+        fprintf(stderr, "Warning: quotation linking not yet implemented (CID: %.16s...)\n", cid);
 
         /* Push quotation type onto stack (as pointer for now) */
         push_type(comp, TYPE_PTR);

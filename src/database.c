@@ -159,6 +159,50 @@ char* db_store_type_sig(march_db_t* db, const char* input_sig, const char* outpu
     return sig_cid;  /* Caller must free */
 }
 
+/* Store blob directly in database (returns cid, caller must free) */
+char* db_store_blob(march_db_t* db, int kind, const char* sig_cid,
+                    const uint8_t* data, size_t data_len) {
+    if (!db || !data) return NULL;
+
+    /* Compute CID */
+    char* cid = compute_sha256(data, data_len);
+    if (!cid) return NULL;
+
+    /* Insert blob (ignore if exists) */
+    const char* sql =
+        "INSERT OR IGNORE INTO blobs (cid, kind, sig_cid, flags, len, data) "
+        "VALUES (?, ?, ?, 0, ?, ?);";
+
+    sqlite3_stmt* stmt = NULL;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare blob insert: %s\n", sqlite3_errmsg(db->db));
+        free(cid);
+        return NULL;
+    }
+
+    sqlite3_bind_text(stmt, 1, cid, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 2, kind);
+    if (sig_cid) {
+        sqlite3_bind_text(stmt, 3, sig_cid, -1, SQLITE_STATIC);
+    } else {
+        sqlite3_bind_null(stmt, 3);
+    }
+    sqlite3_bind_int64(stmt, 4, data_len);
+    sqlite3_bind_blob(stmt, 5, data, data_len, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "Failed to insert blob: %s\n", sqlite3_errmsg(db->db));
+        free(cid);
+        return NULL;
+    }
+
+    return cid;  /* Caller must free */
+}
+
 /* Store compiled word in database */
 bool db_store_word(march_db_t* db, const char* name, const char* namespace,
                    const uint8_t* cells, size_t cell_count, const char* type_sig,

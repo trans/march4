@@ -26,6 +26,10 @@ bool db_init_schema(march_db_t* db, const char* schema_file);
 /* Store type signature (returns sig_cid, caller must free) */
 char* db_store_type_sig(march_db_t* db, const char* input_sig, const char* output_sig);
 
+/* Store blob directly (returns cid, caller must free) */
+char* db_store_blob(march_db_t* db, int kind, const char* sig_cid,
+                    const uint8_t* data, size_t data_len);
+
 /* Store compiled word */
 bool db_store_word(march_db_t* db, const char* name, const char* namespace,
                    const uint8_t* cells, size_t cell_count, const char* type_sig,

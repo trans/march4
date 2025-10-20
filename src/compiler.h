@@ -14,6 +14,9 @@
 /* Maximum quotation nesting depth */
 #define MAX_QUOT_DEPTH 16
 
+/* Maximum pending quotation references in a single word */
+#define MAX_QUOT_REFS 64
+
 /* Quotation (compile-time only) */
 typedef struct {
     cell_buffer_t* cells;
@@ -40,8 +43,12 @@ typedef struct compiler {
     cell_buffer_t* buffer_stack[MAX_QUOT_DEPTH + 1];  /* +1 for root */
     int buffer_stack_depth;
 
-    /* Runtime quotation counter for generating unique names */
+    /* Runtime quotation counter for generating unique names (deprecated) */
     int quot_counter;
+
+    /* Pending quotation CID references (for linking) */
+    char* pending_quot_cids[MAX_QUOT_REFS];
+    int pending_quot_count;
 } compiler_t;
 
 /* Create/free compiler */
