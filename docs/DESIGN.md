@@ -6,8 +6,7 @@ Topic: Core execution model, memory architecture, and compiler/runtime
        design for a statically-typed, Forth-like language integrated with
        a content-addressable database store (SQLite).
 
----
-1. Execution Model Summary
+## 1. Execution Model Summary
 
 • The system follows a traditional Forth inner interpreter, but statically typed:
   - Each word has a concrete, compile-time type signature.
@@ -19,8 +18,7 @@ Topic: Core execution model, memory architecture, and compiler/runtime
   - Data is exchanged via a word-sized data stack (raw machine words / pointers).
   - No dynamic lookup of names; the dictionary is used only at compile/link time.
 
----
-2. Program Representation and Database Storage
+## 2. Program Representation and Database Storage
 
 • Source words and definitions are stored in a SQLite database:
   - Tables for `words`, `definitions`, `edges`, and `blobs`.
@@ -35,18 +33,17 @@ Topic: Core execution model, memory architecture, and compiler/runtime
 
 • The runtime never needs word names—only CIDs and direct pointers.
 
----
-3. Cell Encoding (Code Stream)
+## 3. Cell Encoding (Code Stream)
 
 • Each Cell = one machine word (64 bits typical) with low bits used as a tag.
 
   Low-bit tags:
       00 = XT (execute word)
-      01 = EXIT (return)
-      10 = LIT_I64 (next word = 64-bit literal)
-      11 = EXT (escape / extended form)
+      01 = GO (return)
+      10 = LIT_I62 (next word = 64-bit literal)
+      11 = ?? (tbd)
 
-• Extended forms (EXT) allow unlimited new instruction kinds:
+• In future 11 may be used for for Extended forms (EXT) allow unlimited new instruction kinds:
       EXT + next word sub-tag (e.g., LIT_REF, LIT_F64, DBG_MARK, CALL_INDIRECT, etc.)
 
 • Dispatch loop pseudocode:
@@ -61,8 +58,7 @@ Topic: Core execution model, memory architecture, and compiler/runtime
 • Alignment guarantees (x86-64, AArch64): low 2 bits of pointers are zero due to ≥4-byte alignment, so pointer tagging is safe and portable.
 
 
----
-4. Data Stack and Runtime Values
+## 4. Data Stack and Runtime Values
 
 • The **data stack** is fully type-erased at runtime.
 
@@ -84,8 +80,7 @@ Topic: Core execution model, memory architecture, and compiler/runtime
   - Global store objects are immutable snapshots; stack-heap objects are mutable.
 
 
----
-5. Memory Model
+## 5. Memory Model
 
 • Two conceptual heaps:
 
@@ -99,11 +94,16 @@ Topic: Core execution model, memory architecture, and compiler/runtime
      - Used for variables, saved data, and cross-word references.
      - Updated via “freeze”: converts a mutable workspace object into an immutable snapshot, computes its hash, and stores it.
 
----
-6. Compiler / Optimizer: Automatic Mutability Inference
+• The stack heap is where non-immediate (64 bit numbers, etc) data lives for stack processing.
+
+
+## 6. Compiler / Optimizer: Automatic Mutability Inference
 
 Goal: Let the compiler decide when in-place mutation is safe and when to
 freeze automatically—eliminating the need for manual “mutable vs immutable” choice.
+A program can override this marking explictly which to use.
+
+Note: This feature does not have to be implmented right away.
 
 Core technique: **uniqueness / borrow analysis** (SSA data-flow lattice).
 
@@ -128,16 +128,16 @@ Lowering decisions:
 Compiler performs forward data-flow over SSA; emits warnings or inserts
 freeze nodes automatically.
 
----
-7. Optional Development Features
+
+## 7. Optional Development Features
 
 • Shadow type/borrow stacks for debugging builds only. (Sweet!)
 • Mutability trace dump: show where values changed U→B or froze.
 • assert-unique / assert-immutable primitives for tests.
 • Visualization flags: `-Zmutviz` to annotate compilation output.
 
----
-8. Interoperability and Future Extensions
+
+## 8. Interoperability and Future Extensions
 
 • Planned C interop for primitives and FFI (useful for SQLite access).
 • Deterministic, little-endian on-disk format for CAS hashing.
@@ -145,22 +145,21 @@ freeze nodes automatically.
 • EXT-encoded future features (e.g., fast strings, debug markers).
 • Database GC and dead-code deletion via “edge table” reference graph.
 
----
-9. Summary of Design Choices
 
-✔ Code stored as content-addressed bytecode streams in SQLite.  
-✔ One-word Cells with 2-bit low-tag encoding.  
-✔ Explicit EXIT instruction.  
-✔ Type-erased data stack: raw words / pointers, no runtime tags.  
-✔ Heap objects self-describe with headers.  
-✔ Mutable workspace heap; immutable global store.  
+## 9. Summary of Design Choices
+
+✔ Code stored as content-addressed bytecode streams in SQLite
+✔ One-word Cells with 2-bit low-tag encoding.
+✔ Explicit EXIT instruction XT(0).
+✔ Type-erased data stack: raw words / pointers, no runtime tags needed.
+✔ Heap objects self-describe with headers.
+✔ Mutable workspace heap (for stack ops); immutable global store (for storing program state).
 ✔ Automatic in-place vs persistent update via borrow/uniqueness analysis.  
-✔ Late “freeze” insertion at escape boundaries.  
-✔ Deterministic little-endian on-disk representation.  
+✔ Late “freeze” insertion at escape boundaries.
+✔ Deterministic little-endian on-disk representation.
 ✔ All type safety and overload resolution done statically.
+
+See DETAILS.md for some addition information.
 
 ---
 End of Document
-──────────────────────────────────────────────
-
-See DETAILS.md for addition information.

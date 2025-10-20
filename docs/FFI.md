@@ -5,8 +5,7 @@ to SQLite, using OCaml for the compiler/tooling, with optional Rust FFI
 for high-performance persistent data structures. Eventually, March
 self-hosts and replaces OCaml.
 
---
-1. Architectural Overview
+## 1. Architectural Overview
 
 • The global store is a content-addressed graph of immutable nodes.
 • Lives in memory during execution; persisted to SQLite on commits.
@@ -18,16 +17,14 @@ Memory layers:
   - Global store: immutable, content-addressed nodes (in memory)
   - SQLite: persistent snapshot of CIDs for durability
 
---
-2. Language Roles
+## 2. Language Roles
 
 • OCaml — compiler, typechecker, linker, and global store manager.
 • Rust — provides fast persistent data structures (HAMT, vector tries)
   via FFI. (Later replaced by March.)
 • March — eventual self-hosted language reusing same design.
 
---
-3. OCaml Phase → Rust FFI Phase → March Phase
+## 3. OCaml Phase → Rust FFI Phase → March Phase
 
 Phase 1 (OCaml only):
   - Use OCaml’s built-in Map/Set for persistent structures.
@@ -44,13 +41,13 @@ Phase 3 (March self-host):
   - Architecture remains the same: immutable in-memory store,
     persisted CAS snapshots.
 
---
-4. Rust <-> OCaml FFI Interface
+## 4. Rust <-> OCaml FFI Interface
 
 FFI uses opaque handles (Arc-backed objects) to avoid copying data
 between runtimes. Each handle is an OCaml custom block that owns an Arc.
 
 Rust side type signatures:
+
 ```
 #[repr(C)]
 pub struct MapHandle(*mut MapInner);
@@ -76,8 +73,8 @@ pub extern "C" fn blob_len(h: BlobHandle) -> u64;
 pub extern "C" fn cid_of(h: MapHandle, out: *mut u8); // writes 32 bytes
 ```
 
-
 OCaml binding via ctypes:
+
 ```
 open Ctypes
 open Foreign
@@ -93,8 +90,7 @@ let map_size = foreign "map_size" (ptr map @-> returning uint64_t)
 
 OCaml GC finalizer decrements the Arc count via `map_drop`.
 
---
-5. Global Store Lifecycle
+## 5. Global Store Lifecycle
 
 • Root structure holds top-level maps/vectors (globals, types, etc.)
 • On commit:
@@ -106,21 +102,19 @@ OCaml GC finalizer decrements the Arc count via `map_drop`.
     - Lazily hydrate in-memory structures from SQLite as needed
     - Maintain an LRU for cold objects
 
---
-6. Future Optimizations
+## 6. Future Optimizations
 
 • Hybrid GC / refcount system for short-lived workspace mutables.
 • Automated “freeze” insertion when values escape scope.
 • Incremental commits (dirty-node tracking).
 • Move Rust DS implementation into March when self-hosted.
 
---
-Implementation Priorities
+
+## Implementation Priorities
 
 1. Start with OCaml-only persistent maps and sets.
 2. Integrate SQLite commit/load flow.
 3. Add Rust HAMT/Vector FFI for hot code paths.
 4. Transition tooling to March over time.
 
---
 End of Summary & Sketch
