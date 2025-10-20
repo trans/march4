@@ -175,7 +175,7 @@ int main(void) {
             e = e->next;
         }
     }
-    ASSERT_EQ(count, 41);  /* 39 + branch + 0branch */
+    ASSERT_EQ(count, 42);  /* 39 + branch + 0branch + execute */
 
     dict_free(dict);
 

@@ -106,4 +106,8 @@ void register_primitives(dictionary_t* dict) {
 
     parse_type_sig("i64 ->", &sig);
     dict_add(dict, "0branch", &op_0branch, NULL, &sig, true, false, NULL);
+
+    /* Quotation execution */
+    parse_type_sig("ptr ->", &sig);
+    dict_add(dict, "execute", &op_execute, NULL, &sig, true, false, NULL);
 }

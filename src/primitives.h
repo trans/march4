@@ -66,6 +66,9 @@ extern void op_twofromr(void);
 extern void op_branch(void);
 extern void op_0branch(void);
 
+/* Quotation execution */
+extern void op_execute(void);
+
 /* Register all primitives in dictionary */
 void register_primitives(dictionary_t* dict);
 

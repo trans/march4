@@ -37,10 +37,10 @@ test_dict: test_dict.c dictionary.o
 test_database: test_database.c database.o cells.o
 	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
-test_primitives: test_primitives.c primitives.o dictionary.o
+test_primitives: test_primitives.c primitives.o dictionary.o $(VM_LIB)
 	$(CC) $(CFLAGS) $^ -o $@
 
-test_compiler: test_compiler.c compiler.o primitives.o dictionary.o database.o cells.o tokens.o
+test_compiler: test_compiler.c compiler.o primitives.o dictionary.o database.o cells.o tokens.o $(VM_LIB)
 	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
 test_loader: test_loader.c loader.o runner.o compiler.o primitives.o dictionary.o database.o cells.o tokens.o $(VM_LIB)
