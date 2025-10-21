@@ -43,107 +43,96 @@ The compiler never sees runtime addresses. The loader never sees source code. Ea
 
 ### Blob Structure
 
-A compiled word is stored as a **variable-length encoded sequence**:
+A compiled word is stored as a **fixed 2-byte tag sequence**:
 
 ```
 Blob data = tag₁ [CID₁] || tag₂ [CID₂] || ... || tagₙ [CIDₙ]
             └────┬────┘
-         1-2 bytes + optional 32-byte CID
+         2 bytes + optional 32-byte CID
 ```
 
 Each element is either:
-- **Primitive**: 1-2 byte tag (no CID)
-- **Content reference**: 1-2 byte tag + 32-byte CID
+- **Primitive**: 2-byte tag (no CID)
+- **Content reference**: 2-byte tag + 32-byte CID
 
 Example: `: double dup + ;`
 ```
 Blob contains:
-  0x0A        (primitive #5 = dup, 1 byte)
-  0x02        (primitive #1 = add, 1 byte)
-Total: 2 bytes!
+  0x000A 0x0000  (primitive #5 = dup, 2 bytes)
+  0x0002 0x0000  (primitive #1 = add, 2 bytes)
+Total: 4 bytes!
 ```
 
 Example: `: fifteen 5 10 + ;`
 ```
 Blob contains:
-  0x07 + [32-byte CID]  (BLOB_DATA, literal 5)
-  0x07 + [32-byte CID]  (BLOB_DATA, literal 10)
-  0x02                  (primitive #1 = add)
-Total: 67 bytes (vs 96 bytes with fixed 32-byte encoding)
+  0x0007 0x0000 + [32-byte CID]  (BLOB_DATA, literal 5)
+  0x0007 0x0000 + [32-byte CID]  (BLOB_DATA, literal 10)
+  0x0002 0x0000                  (primitive #1 = add)
+Total: 70 bytes (vs 96 bytes with fixed 32-byte encoding)
 ```
 
-### Variable-Length Tag Encoding
+### Fixed 2-Byte Tag Encoding
 
-March uses **UTF-8 style variable-length encoding** for tags:
+March uses **fixed 2-byte tags** for all references:
 
-**Format** (little-endian):
+**Format** (little-endian uint16_t):
 ```
-First byte:
-  Bit 7: continuation (1 = more bytes, 0 = done)
-  Bits 0-6: data
-
-Each continuation byte:
-  Bit 7: continuation
-  Bits 0-6: data (accumulated left-to-right)
+uint16_t tag (2 bytes):
+  Bit 0: Type flag
+    0 = Primitive (bits 1-15 = primitive ID, 0-32767)
+    1 = CID follows (bits 1-15 = blob kind, 0-32767)
 ```
 
-**1-byte values** (0-127):
-```
-0XXXXXXX
-└─ 7 data bits
+**Interpreting the tag**:
+```c
+uint16_t tag = *(uint16_t*)ptr;
+
+if (tag & 1) {
+    // CID reference
+    uint16_t kind = tag >> 1;
+    char* cid = ptr + 2;  // CID follows immediately
+} else {
+    // Primitive
+    uint16_t prim_id = tag >> 1;
+}
 ```
 
-**2-byte values** (128-16383):
+**Examples**:
 ```
-1XXXXXXX 0XXXXXXX
-└─ 7 bits  └─ 7 bits (total: 14 data bits)
-```
-
-**Interpreting the data value**:
-```
-Data bit 0:
-  0 = Primitive (remaining bits = primitive ID)
-  1 = CID follows (remaining bits = blob kind)
-
-Examples:
-  Value 10 = 0b00001010 → bit0=0, id=5 → Primitive #5
-  Value 3  = 0b00000011 → bit0=1, kind=1 → BLOB_WORD CID follows
+Tag 0x000A = 10 = (5 << 1) | 0 → Primitive #5 (dup)
+Tag 0x0002 = 2  = (1 << 1) | 0 → Primitive #1 (add)
+Tag 0x0003 = 3  = (1 << 1) | 1 → BLOB_WORD (kind=1), CID follows
+Tag 0x0007 = 7  = (3 << 1) | 1 → BLOB_DATA (kind=3), CID follows
 ```
 
 **Why this format?**
-- Primitives are 1-2 bytes (not 32!)
-- ~32x space savings for primitive-heavy code
-- Still supports full 32-byte CIDs for content-addressing
-- Fast decoding (simple loop)
-- Little-endian (efficient on x86-64/ARM)
+- **Simple**: Single unaligned read, no loops
+- **Fast**: No branches in decode, highly predictable
+- **Compact**: Primitives are 2 bytes (not 32!)
+- **Sufficient**: Supports 32K primitives and 32K blob kinds
+- **Little-endian**: Efficient on x86-64/ARM
 
 ### Encoding and Decoding Algorithms
 
 **Decoding** (loader reads blob):
 ```c
 uint8_t* decode_tag(uint8_t* ptr, bool* is_cid, uint16_t* id_or_kind, char** cid) {
-    // Decode variable-length value
-    uint32_t value = 0;
-    int shift = 0;
-    uint8_t byte;
+    // Read 2-byte tag (little-endian)
+    uint16_t tag = *(uint16_t*)ptr;
+    ptr += 2;
 
-    do {
-        byte = *ptr++;
-        value |= (byte & 0x7F) << shift;
-        shift += 7;
-    } while (byte & 0x80);
-
-    // Interpret data bit 0
-    if (value & 1) {
-        // CID follows
+    // Check bit 0
+    if (tag & 1) {
+        // CID reference
         *is_cid = true;
-        *id_or_kind = value >> 1;  // Blob kind
+        *id_or_kind = tag >> 1;  // Blob kind
         *cid = (char*)ptr;
         return ptr + 32;  // Skip CID
     } else {
         // Primitive
         *is_cid = false;
-        *id_or_kind = value >> 1;  // Primitive ID
+        *id_or_kind = tag >> 1;  // Primitive ID
         *cid = NULL;
         return ptr;
     }
@@ -153,27 +142,15 @@ uint8_t* decode_tag(uint8_t* ptr, bool* is_cid, uint16_t* id_or_kind, char** cid
 **Encoding** (compiler writes blob):
 ```c
 // Encode primitive
-void encode_primitive(buffer_t* buf, uint16_t prim_id) {
-    uint32_t value = (prim_id << 1) | 0;  // Bit 0 = 0
-
-    while (value >= 0x80) {
-        buffer_append(buf, (value & 0x7F) | 0x80);
-        value >>= 7;
-    }
-    buffer_append(buf, value & 0x7F);
+void encode_primitive(blob_buffer_t* buf, uint16_t prim_id) {
+    uint16_t tag = (prim_id << 1) | 0;  // Bit 0 = 0
+    buffer_append_u16(buf, tag);
 }
 
 // Encode CID reference
-void encode_cid_ref(buffer_t* buf, uint8_t kind, const char* cid) {
-    uint32_t value = (kind << 1) | 1;  // Bit 0 = 1
-
-    while (value >= 0x80) {
-        buffer_append(buf, (value & 0x7F) | 0x80);
-        value >>= 7;
-    }
-    buffer_append(buf, value & 0x7F);
-
-    // Append 32-byte CID
+void encode_cid_ref(blob_buffer_t* buf, uint16_t kind, const char* cid) {
+    uint16_t tag = (kind << 1) | 1;  // Bit 0 = 1
+    buffer_append_u16(buf, tag);
     buffer_append_bytes(buf, cid, 32);
 }
 ```
@@ -181,18 +158,20 @@ void encode_cid_ref(buffer_t* buf, uint8_t kind, const char* cid) {
 **Encoding examples**:
 ```c
 // Primitive #5 (dup)
-// value = (5 << 1) | 0 = 10 = 0b00001010
-// Result: 0x0A (1 byte)
+// tag = (5 << 1) | 0 = 10 = 0x000A
+// Result: 0x0A 0x00 (2 bytes, little-endian)
 
 // Primitive #200
-// value = (200 << 1) | 0 = 400 = 0b0000000110010000
-// Byte 1: 0b10010000 = 0x90 (continue=1, data=0010000)
-// Byte 2: 0b00000011 = 0x03 (continue=0, data=0000011)
-// Result: 0x90 0x03 (2 bytes)
+// tag = (200 << 1) | 0 = 400 = 0x0190
+// Result: 0x90 0x01 (2 bytes, little-endian)
 
 // BLOB_WORD CID
-// value = (1 << 1) | 1 = 3 = 0b00000011
-// Result: 0x03 + 32-byte CID (33 bytes total)
+// tag = (1 << 1) | 1 = 3 = 0x0003
+// Result: 0x03 0x00 + 32-byte CID (34 bytes total)
+
+// BLOB_DATA CID
+// tag = (3 << 1) | 1 = 7 = 0x0007
+// Result: 0x07 0x00 + 32-byte CID (34 bytes total)
 ```
 
 ### No Runtime Addresses in Storage
@@ -262,8 +241,8 @@ The word's CID is the hash of its variable-length encoded blob. EXIT is not stor
 
 **Example**: `: double dup + ;`
 ```
-word_blob = 0x0A 0x02  (2 bytes: dup primitive, add primitive)
-CID_double = SHA256(0x0A 0x02)
+word_blob = 0x0A 0x00 0x02 0x00  (4 bytes: dup tag, add tag)
+CID_double = SHA256(0x0A 0x00 0x02 0x00)
 ```
 
 **Note**: Because we hash the encoded sequence (not source text), different source producing the same code gets the same CID (good! - deduplication). Primitives are encoded by ID, so changing assembly doesn't change CIDs.
@@ -283,7 +262,7 @@ CID = SHA256(quot_blob)
 
 **Example**: `[ 10 + ]`
 ```
-quot_blob = 0x07 [CID_lit10] 0x02  (tag + CID for literal, tag for add)
+quot_blob = 0x07 0x00 [CID_lit10] 0x02 0x00  (36 bytes: data tag + CID, add tag)
 CID_quot = SHA256(quot_blob)
 ```
 
@@ -549,15 +528,15 @@ The loader can link code **without** examining type signatures. The kind field p
 1. See literal `5`
 2. Create blob: `data=[5 as i64]`, `kind=BLOB_DATA`, `sig_cid=SHA256("->i64")`
 3. Compute `CID_5 = SHA256(data)`
-4. Encode: `0x07` (kind=BLOB_DATA=3, value=(3<<1)|1=7) + `CID_5`
-5. Compute `CID_five = SHA256(0x07 || CID_5)`
+4. Encode: `0x07 0x00` (tag: kind=BLOB_DATA=3, (3<<1)|1=7) + `CID_5`
+5. Compute `CID_five = SHA256(0x07 0x00 || CID_5)`
 6. Store word blob, create words entry
 
 **Storage** (blobs table):
 ```
 cid=CID_5, kind=BLOB_DATA, sig_cid=sig_i64, data=[0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-cid=CID_five, kind=BLOB_WORD, sig_cid=sig_to_i64, data=[0x07, CID_5...]
-     └─ 33 bytes: tag + 32-byte CID
+cid=CID_five, kind=BLOB_WORD, sig_cid=sig_to_i64, data=[0x07, 0x00, CID_5...]
+     └─ 34 bytes: 2-byte tag + 32-byte CID
 ```
 
 **Storage** (words table):
@@ -566,8 +545,8 @@ name="five", def_cid=CID_five, type_sig="->i64"
 ```
 
 **Linking**:
-1. Load `CID_five` blob → `[0x07, CID_5...]`
-2. Decode tag: is_cid=true, kind=BLOB_DATA, cid=CID_5
+1. Load `CID_five` blob → `[0x07, 0x00, CID_5...]`
+2. Decode tag `0x0007`: is_cid=true, kind=BLOB_DATA, cid=CID_5
 3. Link `CID_5`: kind=BLOB_DATA → load data → value=5
 4. Emit `[LIT 5]`
 5. Append `[EXIT]`
@@ -588,20 +567,20 @@ Stack: [5]
 **Compilation**:
 1. Look up `dup` → primitive #5
 2. Look up `+` → primitive #1
-3. Encode: `0x0A` (prim 5: (5<<1)|0=10) `0x02` (prim 1: (1<<1)|0=2)
-4. Compute `CID_double = SHA256(0x0A 0x02)`
+3. Encode: `0x0A 0x00` (tag: prim 5, (5<<1)|0=10) `0x02 0x00` (tag: prim 1, (1<<1)|0=2)
+4. Compute `CID_double = SHA256(0x0A 0x00 0x02 0x00)`
 
 **Storage** (blobs table):
 ```
-cid=CID_double, kind=BLOB_WORD, sig_cid=sig_i64_to_i64, data=[0x0A, 0x02]
-     └─ Just 2 bytes!
+cid=CID_double, kind=BLOB_WORD, sig_cid=sig_i64_to_i64, data=[0x0A, 0x00, 0x02, 0x00]
+     └─ Just 4 bytes!
 ```
 
 **Linking**:
-1. Load `CID_double` blob → `[0x0A, 0x02]`
-2. Decode tag `0x0A`: is_cid=false, prim_id=5 → lookup `&op_dup`
+1. Load `CID_double` blob → `[0x0A, 0x00, 0x02, 0x00]`
+2. Decode tag `0x000A`: is_cid=false, prim_id=5 → lookup `&op_dup`
 3. Emit `[XT &op_dup]`
-4. Decode tag `0x02`: is_cid=false, prim_id=1 → lookup `&op_add`
+4. Decode tag `0x0002`: is_cid=false, prim_id=1 → lookup `&op_add`
 5. Emit `[XT &op_add]`
 6. Append `[EXIT]`
 7. Result: `[XT &op_dup] [XT &op_add] [EXIT]` at address Y
@@ -616,7 +595,7 @@ Executes [EXIT] → returns
 Stack after: [20]
 ```
 
-**Space savings**: 2 bytes vs 64 bytes (32x smaller!)
+**Space savings**: 4 bytes vs 64 bytes (16x smaller!)
 
 ### Example 3: Quotation
 
@@ -626,31 +605,31 @@ Stack after: [20]
 1. Enter quotation `[`
 2. Compile quotation body:
    - Literal `10` → create BLOB_DATA, get CID_10
-   - Encode: `0x07` + CID_10 (BLOB_DATA tag + CID)
-   - Primitive `+` → encode: `0x02` (primitive #1)
+   - Encode: `0x07 0x00` + CID_10 (BLOB_DATA tag + CID)
+   - Primitive `+` → encode: `0x02 0x00` (primitive #1 tag)
 3. Close quotation `]`:
-   - Build: `0x07 [CID_10] 0x02`
-   - Compute `CID_quot = SHA256(0x07 || CID_10 || 0x02)`
+   - Build: `0x07 0x00 [CID_10] 0x02 0x00`
+   - Compute `CID_quot = SHA256(...)`
    - Store blob with `kind=BLOB_QUOTATION`
-4. In parent word, encode: `0x05` + CID_quot (BLOB_QUOTATION=2, (2<<1)|1=5)
-5. Compute `CID_make_adder = SHA256(0x05 || CID_quot)`
+4. In parent word, encode: `0x05 0x00` + CID_quot (BLOB_QUOTATION=2, (2<<1)|1=5)
+5. Compute `CID_make_adder = SHA256(0x05 0x00 || CID_quot)`
 
 **Storage** (blobs table):
 ```
 cid=CID_10, kind=BLOB_DATA, data=[10 as i64]
 cid=CID_quot, kind=BLOB_QUOTATION, sig_cid=sig_i64_to_i64,
-              data=[0x07, CID_10..., 0x02]  (34 bytes)
+              data=[0x07, 0x00, CID_10..., 0x02, 0x00]  (38 bytes)
 cid=CID_make_adder, kind=BLOB_WORD, sig_cid=sig_to_ptr,
-                    data=[0x05, CID_quot...]  (33 bytes)
+                    data=[0x05, 0x00, CID_quot...]  (34 bytes)
 ```
 
 **Linking** `make-adder`:
-1. Load `CID_make_adder` → `[0x05, CID_quot...]`
-2. Decode tag `0x05`: is_cid=true, kind=BLOB_QUOTATION, cid=CID_quot
+1. Load `CID_make_adder` → `[0x05, 0x00, CID_quot...]`
+2. Decode tag `0x0005`: is_cid=true, kind=BLOB_QUOTATION, cid=CID_quot
 3. Link `CID_quot`:
-   - Load quotation blob: `[0x07, CID_10..., 0x02]`
-   - Decode `0x07`: kind=BLOB_DATA, load literal 10 → emit `[LIT 10]`
-   - Decode `0x02`: primitive #1 → emit `[XT &op_add]`
+   - Load quotation blob: `[0x07, 0x00, CID_10..., 0x02, 0x00]`
+   - Decode `0x0007`: kind=BLOB_DATA, load literal 10 → emit `[LIT 10]`
+   - Decode `0x0002`: primitive #1 → emit `[XT &op_add]`
    - Append `[EXIT]`
    - Result: quotation cells at address Q
 4. Because kind==BLOB_QUOTATION, emit `[LIT Q]` (push address!)
@@ -689,27 +668,27 @@ Stack: [15]
 
 **Compilation** of `fifteen`:
 1. Look up `five` → `CID_five` (user word, already compiled)
-2. Encode: `0x03` + CID_five (BLOB_WORD=1, (1<<1)|1=3)
-3. Literal `10` → `CID_10`, encode: `0x07` + CID_10
-4. Primitive `+` → encode: `0x02`
-5. Build: `0x03 [CID_five] 0x07 [CID_10] 0x02`
+2. Encode: `0x03 0x00` + CID_five (BLOB_WORD=1, (1<<1)|1=3)
+3. Literal `10` → `CID_10`, encode: `0x07 0x00` + CID_10
+4. Primitive `+` → encode: `0x02 0x00`
+5. Build: `0x03 0x00 [CID_five] 0x07 0x00 [CID_10] 0x02 0x00`
 6. `CID_fifteen = SHA256(...)`
 
 **Storage** (blobs table):
 ```
-cid=CID_fifteen, kind=BLOB_WORD, data=[0x03, CID_five..., 0x07, CID_10..., 0x02]
-     └─ 67 bytes: (1+32) + (1+32) + 1
+cid=CID_fifteen, kind=BLOB_WORD, data=[0x03, 0x00, CID_five..., 0x07, 0x00, CID_10..., 0x02, 0x00]
+     └─ 70 bytes: (2+32) + (2+32) + 2
 ```
 
 **Linking** `fifteen`:
-1. Load blob: `[0x03, CID_five..., 0x07, CID_10..., 0x02]`
-2. Decode `0x03`: kind=BLOB_WORD, cid=CID_five
+1. Load blob: `[0x03, 0x00, CID_five..., 0x07, 0x00, CID_10..., 0x02, 0x00]`
+2. Decode `0x0003`: kind=BLOB_WORD, cid=CID_five
    - Recursively link five's blob → address F
    - Emit `[XT F]` (call it!)
-3. Decode `0x07`: kind=BLOB_DATA, cid=CID_10
+3. Decode `0x0007`: kind=BLOB_DATA, cid=CID_10
    - Load literal 10
    - Emit `[LIT 10]`
-4. Decode `0x02`: primitive #1
+4. Decode `0x0002`: primitive #1
    - Emit `[XT &op_add]`
 5. Append `[EXIT]`
 6. Result: `[XT F] [LIT 10] [XT &op_add] [EXIT]`
@@ -947,34 +926,34 @@ void* loader_load_word(loader_t* loader, const char* name);
 
 ### Encoding Sizes
 
-**Fixed 32-byte CID encoding** (original design):
+**Fixed 32-byte CID encoding** (original/naive design):
 - Primitive: 32 bytes
 - User word: 32 bytes
 - Quotation: 32 bytes
 - Literal: 32 bytes
 
-**Variable-length encoding** (new design):
-- Primitive: 1-2 bytes (typically 1)
-- User word: 33 bytes (1-byte tag + 32-byte CID)
-- Quotation: 33 bytes (1-byte tag + 32-byte CID)
-- Literal: 33 bytes (1-byte tag + 32-byte CID)
+**Fixed 2-byte tag encoding** (current design):
+- Primitive: 2 bytes
+- User word: 34 bytes (2-byte tag + 32-byte CID)
+- Quotation: 34 bytes (2-byte tag + 32-byte CID)
+- Literal: 34 bytes (2-byte tag + 32-byte CID)
 
 ### Space Savings by Code Type
 
 **Primitive-heavy code** (e.g., `: double dup + ;`):
 - Old: 64 bytes (2 × 32)
-- New: 2 bytes (1 + 1)
-- **Savings: 97%** (32x smaller)
+- New: 4 bytes (2 + 2)
+- **Savings: 94%** (16x smaller)
 
 **Mixed code** (e.g., `: fifteen 5 10 + ;`):
 - Old: 96 bytes (3 × 32)
-- New: 67 bytes (33 + 33 + 1)
-- **Savings: 30%**
+- New: 70 bytes (34 + 34 + 2)
+- **Savings: 27%**
 
 **CID-heavy code** (many user word calls):
 - Old: N × 32 bytes
-- New: N × 33 bytes
-- **Overhead: 3%** (acceptable for rare case)
+- New: N × 34 bytes
+- **Overhead: 6%** (acceptable - rare case)
 
 ### Real-World Estimates
 
@@ -986,20 +965,21 @@ Assuming typical code distribution:
 
 **Average per reference**:
 - Old: 32 bytes
-- New: (0.5 × 1.5) + (0.3 × 33) + (0.15 × 33) + (0.05 × 33) = 17.25 bytes
-- **Savings: ~46%**
+- New: (0.5 × 2) + (0.3 × 34) + (0.15 × 34) + (0.05 × 34) = 18 bytes
+- **Savings: ~44%**
 
 For a 10,000-reference codebase:
 - Old: 320 KB
-- New: 172.5 KB
-- **Saved: 147.5 KB**
+- New: 180 KB
+- **Saved: 140 KB**
 
 ### Benefits Beyond Size
 
-1. **Faster primitive linking** - No database lookup, just array index
-2. **Cache efficiency** - Smaller blobs fit better in CPU cache
-3. **Faster transmission** - Less data to send over network
-4. **Better compression** - Primitives are highly compressible (many duplicates)
+1. **Faster primitive encoding/decoding** - Single uint16_t read/write, no loops
+2. **Simpler code** - No variable-length parsing logic
+3. **Faster compilation** - Less CPU overhead encoding primitives
+4. **Cache efficiency** - Smaller blobs fit better in CPU cache
+5. **Predictable performance** - No branches in hot decode path
 
 ---
 
@@ -1032,11 +1012,11 @@ For a 10,000-reference codebase:
 ## Summary
 
 **Key Principles**:
-1. **Variable-length encoding** - UTF-8 style, little-endian
-2. **Primitives are 1-2 bytes** (not 32!) - massive space savings
+1. **Fixed 2-byte tag encoding** - simple, fast, little-endian
+2. **Primitives are 2 bytes** (not 32!) - massive space savings
 3. Storage contains only encoded references, never runtime addresses
 4. Identical code produces identical CIDs
-5. **Data bit 0**: distinguishes primitives (0) from CID references (1)
+5. **Tag bit 0**: distinguishes primitives (0) from CID references (1)
 6. **Primitives use fixed IDs** (stable forever, assembly can change)
 7. **EXIT not stored** in blobs - linker appends based on kind
 8. Blob kind determines linking behavior (call vs push)
@@ -1046,14 +1026,15 @@ For a 10,000-reference codebase:
 **Benefits**:
 - ✅ True content-addressable storage
 - ✅ Reproducible builds
-- ✅ **~50% space savings** on average (97% for primitive-heavy code)
-- ✅ Faster primitive linking (no DB lookup)
+- ✅ **~44% space savings** on average (94% for primitive-heavy code)
+- ✅ **Ultra-simple encoding** - single uint16_t read/write
+- ✅ **Fast compilation** - no loops, no branches in encode/decode
+- ✅ Faster primitive linking (no DB lookup, just array index)
 - ✅ Better cache efficiency (smaller blobs)
 - ✅ Shareable compiled code
 - ✅ Incremental compilation
 - ✅ Platform independence (for blobs)
 
 **Tradeoffs**:
-- More complex encoding/decoding (but simple algorithms)
-- Variable-length parsing (but fast loop)
-- Minimal overhead for CID references (1 byte vs 0 bytes)
+- Minimal overhead for CID references (2 bytes vs 0 bytes)
+- Slightly less space-efficient than variable-length (but much simpler)
