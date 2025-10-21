@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 /* Cell tags - variable-bit encoding */
 #define TAG_XT   0x0  /* 00  - Execute word (EXIT if addr=0) */
@@ -16,11 +17,63 @@
 #define TAG_LNT  0x6  /* 110 - Next N literals (raw 64-bit values) */
 
 /* Blob kind identifiers (for database storage) */
+/* Legacy blob kinds (cell-based storage) */
 #define BLOB_CODE       1    /* Cell stream (compiled word/quotation) */
 #define BLOB_STRING     2    /* UTF-8 string data */
 #define BLOB_ARRAY      3    /* Array header (count + element sig_cid) */
 #define BLOB_STRUCT     4    /* Struct data (field values) */
 #define BLOB_BINARY     5    /* Raw binary data (untyped) */
+
+/* CID-based blob kinds (LINKING.md design) */
+#define BLOB_PRIMITIVE  0    /* Assembly primitive (fixed ID) */
+#define BLOB_WORD       1    /* User-defined word (CID sequence) */
+#define BLOB_QUOTATION  2    /* Quotation (CID sequence, push address not call) */
+#define BLOB_DATA       3    /* Literal data (serialized value) */
+
+/* Fixed primitive ID table (LINKING.md design) */
+/* These IDs are stable and never change - assembly can be updated without breaking compiled code */
+#define PRIM_ADD        1    /* + */
+#define PRIM_SUB        2    /* - */
+#define PRIM_MUL        3    /* * */
+#define PRIM_DIV        4    /* / */
+#define PRIM_MOD        5    /* % */
+#define PRIM_DUP        6    /* dup */
+#define PRIM_DROP       7    /* drop */
+#define PRIM_SWAP       8    /* swap */
+#define PRIM_OVER       9    /* over */
+#define PRIM_ROT        10   /* rot */
+#define PRIM_EQ         11   /* = */
+#define PRIM_NE         12   /* != */
+#define PRIM_LT         13   /* < */
+#define PRIM_GT         14   /* > */
+#define PRIM_LE         15   /* <= */
+#define PRIM_GE         16   /* >= */
+#define PRIM_AND        17   /* & (bitwise) */
+#define PRIM_OR         18   /* | (bitwise) */
+#define PRIM_XOR        19   /* ^ (bitwise) */
+#define PRIM_NOT        20   /* ~ (bitwise) */
+#define PRIM_LSHIFT     21   /* << */
+#define PRIM_RSHIFT     22   /* >> (logical) */
+#define PRIM_ARSHIFT    23   /* >>> (arithmetic) */
+#define PRIM_LAND       24   /* and (logical) */
+#define PRIM_LOR        25   /* or (logical) */
+#define PRIM_LNOT       26   /* not (logical) */
+#define PRIM_ZEROP      27   /* 0? */
+#define PRIM_ZEROGT     28   /* 0> */
+#define PRIM_ZEROLT     29   /* 0< */
+#define PRIM_FETCH      30   /* @ */
+#define PRIM_STORE      31   /* ! */
+#define PRIM_CFETCH     32   /* c@ */
+#define PRIM_CSTORE     33   /* c! */
+#define PRIM_TOR        34   /* >r */
+#define PRIM_FROMR      35   /* r> */
+#define PRIM_RFETCH     36   /* r@ */
+#define PRIM_RDROP      37   /* rdrop */
+#define PRIM_TWOTOR     38   /* 2>r */
+#define PRIM_TWOFROMR   39   /* 2r> */
+#define PRIM_BRANCH     40   /* branch */
+#define PRIM_0BRANCH    41   /* 0branch */
+#define PRIM_EXECUTE    42   /* execute */
 
 /* Cell type */
 typedef uint64_t cell_t;
@@ -48,5 +101,30 @@ typedef struct {
 #define MAX_WORD_NAME     64
 #define MAX_TYPE_SIG      256
 #define MAX_CELL_STREAM   4096
+
+/* CID constants (SHA256 hashes are 32 bytes) */
+#define CID_SIZE 32
+
+/* Blob buffer for variable-length CID sequence encoding (LINKING.md design) */
+/* This is separate from cell_buffer_t which is for runtime cells */
+typedef struct {
+    uint8_t* data;       /* Raw bytes */
+    size_t size;         /* Current size */
+    size_t capacity;     /* Allocated capacity */
+} blob_buffer_t;
+
+/* Blob buffer operations (implemented in cells.c) */
+blob_buffer_t* blob_buffer_create(void);
+void blob_buffer_free(blob_buffer_t* buf);
+void blob_buffer_clear(blob_buffer_t* buf);
+void blob_buffer_append_u16(blob_buffer_t* buf, uint16_t value);
+void blob_buffer_append_bytes(blob_buffer_t* buf, const uint8_t* bytes, size_t len);
+
+/* Blob encoding functions (LINKING.md design) */
+void encode_primitive(blob_buffer_t* buf, uint16_t prim_id);
+void encode_cid_ref(blob_buffer_t* buf, uint16_t kind, const char* cid);
+
+/* Blob decoding functions */
+const uint8_t* decode_tag_ex(const uint8_t* ptr, bool* is_cid, uint16_t* id_or_kind, const char** cid);
 
 #endif /* MARCH_TYPES_H */

@@ -20,10 +20,32 @@ typedef struct {
     void* entry_point;  /* Address of first cell */
 } loaded_word_t;
 
-/* Loader context */
+/* CID-to-address cache entry (for linking) */
+typedef struct cid_cache_entry {
+    char cid[65];           /* CID hex string */
+    void* addr;             /* Runtime address */
+    struct cid_cache_entry* next;
+} cid_cache_entry_t;
+
+/* CID cache hashtable */
+typedef struct {
+    cid_cache_entry_t* buckets[256];
+} cid_cache_t;
+
+/* Loader context (LINKING.md design) */
 typedef struct {
     march_db_t* db;
     dictionary_t* dict;
+
+    /* CID-to-address cache (for recursive linking) */
+    cid_cache_t* cid_cache;
+
+    /* Track allocated buffers for cleanup */
+    void** allocated_buffers;
+    size_t buffer_count;
+    size_t buffer_capacity;
+
+    /* Legacy: loaded words list (deprecated in favor of CID cache) */
     loaded_word_t** words;
     size_t word_count;
     size_t word_capacity;
@@ -39,10 +61,27 @@ loaded_word_t* loader_load_word(loader_t* loader, const char* name, const char* 
 /* Find loaded word by name */
 loaded_word_t* loader_find_word(loader_t* loader, const char* name);
 
-/* Link/resolve XT references in loaded words */
+/* Link/resolve XT references in loaded words (legacy) */
 bool loader_link(loader_t* loader);
 
 /* Get entry point address for a word */
 void* loader_get_entry_point(loader_t* loader, const char* name);
+
+/* ============================================================================ */
+/* CID-based linking functions (LINKING.md design) */
+/* ============================================================================ */
+
+/* Core linking function - recursively link a CID
+ * Returns runtime address of linked code
+ */
+void* loader_link_cid(loader_t* loader, const char* cid);
+
+/* Link a code blob (CID sequence) into runtime cells
+ * Returns runtime address of linked code
+ */
+void* loader_link_code(loader_t* loader, const uint8_t* blob_data, size_t blob_len, int kind);
+
+/* Helper: get primitive runtime address by ID */
+void* loader_get_primitive_addr(loader_t* loader, uint16_t prim_id);
 
 #endif /* MARCH_LOADER_H */

@@ -56,7 +56,7 @@ void dict_free(dictionary_t* dict) {
 }
 
 bool dict_add(dictionary_t* dict, const char* name, void* addr,
-              const char* cid, type_sig_t* sig, bool is_primitive,
+              const char* cid, uint16_t prim_id, type_sig_t* sig, bool is_primitive,
               bool is_immediate, immediate_handler_t handler) {
     unsigned long hash = hash_string(name);
     size_t bucket = hash % dict->bucket_count;
@@ -68,6 +68,7 @@ bool dict_add(dictionary_t* dict, const char* name, void* addr,
     entry->name = strdup(name);
     entry->addr = addr;
     entry->cid = cid ? strdup(cid) : NULL;
+    entry->prim_id = prim_id;
     entry->is_primitive = is_primitive;
     entry->is_immediate = is_immediate;
     entry->handler = handler;

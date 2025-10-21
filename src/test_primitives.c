@@ -49,6 +49,7 @@ void op_twotor(void) {}
 void op_twofromr(void) {}
 void op_branch(void) {}
 void op_0branch(void) {}
+void op_execute(void) {}
 
 int main(void) {
     TEST_SUITE("Primitive Registration");
@@ -56,7 +57,7 @@ int main(void) {
     dictionary_t* dict = dict_create();
     ASSERT(dict != NULL);
 
-    /* Register all primitives */
+    /* Register all primitives (no database needed with dispatch table) */
     register_primitives(dict);
 
     /* Test stack ops */

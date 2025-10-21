@@ -1,13 +1,68 @@
 /*
  * March Language - Word Loader Implementation
+ * Implements CID-based linking algorithm from LINKING.md
  */
 
 #define _POSIX_C_SOURCE 200809L
 
 #include "loader.h"
+#include "cells.h"
+#include "primitives.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+/* ============================================================================ */
+/* CID Cache Management */
+/* ============================================================================ */
+
+static unsigned int hash_cid_str(const char* cid) {
+    unsigned int hash = 0;
+    for (int i = 0; i < 8 && cid[i]; i++) {
+        hash = hash * 31 + cid[i];
+    }
+    return hash % 256;
+}
+
+static cid_cache_t* cid_cache_create(void) {
+    cid_cache_t* cache = calloc(1, sizeof(cid_cache_t));
+    return cache;
+}
+
+static void cid_cache_free(cid_cache_t* cache) {
+    if (!cache) return;
+    for (int i = 0; i < 256; i++) {
+        cid_cache_entry_t* entry = cache->buckets[i];
+        while (entry) {
+            cid_cache_entry_t* next = entry->next;
+            free(entry);
+            entry = next;
+        }
+    }
+    free(cache);
+}
+
+static void cid_cache_put(cid_cache_t* cache, const char* cid, void* addr) {
+    unsigned int bucket = hash_cid_str(cid);
+    cid_cache_entry_t* entry = malloc(sizeof(cid_cache_entry_t));
+    strncpy(entry->cid, cid, 64);
+    entry->cid[64] = '\0';
+    entry->addr = addr;
+    entry->next = cache->buckets[bucket];
+    cache->buckets[bucket] = entry;
+}
+
+static void* cid_cache_get(cid_cache_t* cache, const char* cid) {
+    unsigned int bucket = hash_cid_str(cid);
+    cid_cache_entry_t* entry = cache->buckets[bucket];
+    while (entry) {
+        if (strcmp(entry->cid, cid) == 0) {
+            return entry->addr;
+        }
+        entry = entry->next;
+    }
+    return NULL;
+}
 
 /* Create loader */
 loader_t* loader_create(march_db_t* db, dictionary_t* dict) {
@@ -16,11 +71,31 @@ loader_t* loader_create(march_db_t* db, dictionary_t* dict) {
 
     loader->db = db;
     loader->dict = dict;
+
+    /* Initialize CID cache */
+    loader->cid_cache = cid_cache_create();
+    if (!loader->cid_cache) {
+        free(loader);
+        return NULL;
+    }
+
+    /* Initialize buffer tracking */
+    loader->buffer_capacity = 64;
+    loader->buffer_count = 0;
+    loader->allocated_buffers = calloc(loader->buffer_capacity, sizeof(void*));
+    if (!loader->allocated_buffers) {
+        cid_cache_free(loader->cid_cache);
+        free(loader);
+        return NULL;
+    }
+
+    /* Legacy word list */
     loader->word_capacity = 64;
     loader->word_count = 0;
     loader->words = calloc(loader->word_capacity, sizeof(loaded_word_t*));
-
     if (!loader->words) {
+        free(loader->allocated_buffers);
+        cid_cache_free(loader->cid_cache);
         free(loader);
         return NULL;
     }
@@ -40,10 +115,21 @@ static void loaded_word_free(loaded_word_t* word) {
 /* Free loader */
 void loader_free(loader_t* loader) {
     if (loader) {
+        /* Free legacy loaded words */
         for (size_t i = 0; i < loader->word_count; i++) {
             loaded_word_free(loader->words[i]);
         }
         free(loader->words);
+
+        /* Free allocated buffers (from linking) */
+        for (size_t i = 0; i < loader->buffer_count; i++) {
+            free(loader->allocated_buffers[i]);
+        }
+        free(loader->allocated_buffers);
+
+        /* Free CID cache */
+        cid_cache_free(loader->cid_cache);
+
         free(loader);
     }
 }
@@ -112,30 +198,188 @@ void* loader_get_entry_point(loader_t* loader, const char* name) {
     return NULL;
 }
 
-/* Link/resolve XT references in loaded words */
+/* Link/resolve XT references in loaded words (legacy - deprecated) */
 bool loader_link(loader_t* loader) {
-    /* TODO: Implement word linking
-     *
-     * Current limitation: When compiling `: fifteen five ten + ;`,
-     * we emit XT(NULL) for user words because we don't know their addresses yet.
-     *
-     * To implement linking, we need to:
-     * 1. Store word reference metadata (which XT cell refers to which word name)
-     * 2. Scan loaded words for XT(NULL) cells
-     * 3. Look up referenced words (loading them if needed)
-     * 4. Patch XT cells with actual addresses
-     *
-     * Possible approaches:
-     * - Store relocation info in database (edges table or defs metadata)
-     * - Use LST cells to encode word name references
-     * - Store separate relocation table alongside compiled code
-     *
-     * For now, words that only use primitives and literals will work.
-     */
-
-    fprintf(stderr, "Warning: Word linking not yet implemented\n");
-    fprintf(stderr, "  Words calling other user words will not work yet\n");
-    fprintf(stderr, "  Words with only primitives and literals are OK\n");
-
+    /* Legacy function - with CID-based linking, this is no longer needed */
     return true;
+}
+
+/* ============================================================================ */
+/* CID-Based Linking Implementation (LINKING.md design) */
+/* ============================================================================ */
+
+/* Helper: track allocated buffer for cleanup */
+static void track_buffer(loader_t* loader, void* buffer) {
+    if (loader->buffer_count >= loader->buffer_capacity) {
+        loader->buffer_capacity *= 2;
+        loader->allocated_buffers = realloc(loader->allocated_buffers,
+                                           loader->buffer_capacity * sizeof(void*));
+    }
+    loader->allocated_buffers[loader->buffer_count++] = buffer;
+}
+
+/* Get primitive runtime address by ID */
+void* loader_get_primitive_addr(loader_t* loader, uint16_t prim_id) {
+    /* Simple array lookup using the dispatch table */
+    if (prim_id >= 256) {
+        fprintf(stderr, "Error: Invalid primitive ID %u (max 255)\n", prim_id);
+        return NULL;
+    }
+
+    void* addr = primitive_dispatch_table[prim_id];
+    if (!addr) {
+        fprintf(stderr, "Error: Primitive #%u not registered\n", prim_id);
+    }
+    return addr;
+}
+
+/* Core linking function - recursively link a CID
+ * Implements the algorithm from LINKING.md
+ */
+void* loader_link_cid(loader_t* loader, const char* cid) {
+    /* Check cache first */
+    void* cached = cid_cache_get(loader->cid_cache, cid);
+    if (cached) {
+        return cached;
+    }
+
+    /* Load blob metadata from database */
+    int kind = 0;
+    char* sig_cid = NULL;
+    uint8_t* blob_data = NULL;
+    size_t blob_len = 0;
+
+    if (!db_load_blob_ex(loader->db, cid, &kind, &sig_cid, &blob_data, &blob_len)) {
+        fprintf(stderr, "Error: Blob not found for CID %s\n", cid);
+        return NULL;
+    }
+
+    void* result = NULL;
+
+    switch (kind) {
+        case BLOB_PRIMITIVE:
+            /* Primitives should never be referenced by CID - they use 2-byte IDs in blob encoding */
+            fprintf(stderr, "Error: Primitive referenced by CID %s (primitives should use ID-based encoding)\n", cid);
+            break;
+
+        case BLOB_WORD:
+        case BLOB_QUOTATION:
+            /* Recursively link code blob */
+            result = loader_link_code(loader, blob_data, blob_len, kind);
+            break;
+
+        case BLOB_DATA:
+            /* Literal value - allocate and copy */
+            result = malloc(blob_len);
+            if (result) {
+                memcpy(result, blob_data, blob_len);
+                track_buffer(loader, result);
+            }
+            break;
+
+        default:
+            fprintf(stderr, "Error: Unknown blob kind %d for CID %s\n", kind, cid);
+            break;
+    }
+
+    /* Free loaded data */
+    if (sig_cid) free(sig_cid);
+    if (blob_data) free(blob_data);
+
+    /* Cache result */
+    if (result) {
+        cid_cache_put(loader->cid_cache, cid, result);
+    }
+
+    return result;
+}
+
+/* Link a code blob (CID sequence) into runtime cells
+ * Implements the algorithm from LINKING.md
+ */
+void* loader_link_code(loader_t* loader, const uint8_t* blob_data, size_t blob_len, int kind) {
+    /* Allocate runtime cell buffer (estimate size, expand if needed) */
+    size_t capacity = 64;
+    size_t count = 0;
+    cell_t* cells = malloc(capacity * sizeof(cell_t));
+    if (!cells) return NULL;
+
+    const uint8_t* ptr = blob_data;
+    const uint8_t* end = blob_data + blob_len;
+
+    while (ptr < end) {
+        bool is_cid;
+        uint16_t id_or_kind;
+        const char* cid;
+
+        /* Decode next tag */
+        ptr = decode_tag_ex(ptr, &is_cid, &id_or_kind, &cid);
+
+        /* Expand buffer if needed */
+        if (count >= capacity) {
+            capacity *= 2;
+            cells = realloc(cells, capacity * sizeof(cell_t));
+            if (!cells) return NULL;
+        }
+
+        if (!is_cid) {
+            /* Primitive: look up runtime address by ID */
+            void* prim_addr = loader_get_primitive_addr(loader, id_or_kind);
+            if (!prim_addr) {
+                free(cells);
+                return NULL;
+            }
+            cells[count++] = encode_xt(prim_addr);
+        } else {
+            /* CID reference: recursively link */
+            void* addr = loader_link_cid(loader, cid);
+            if (!addr) {
+                free(cells);
+                return NULL;
+            }
+
+            /* The kind field determines how to use this reference */
+            switch (id_or_kind) {
+                case BLOB_WORD:
+                case BLOB_PRIMITIVE:
+                    /* Call it */
+                    cells[count++] = encode_xt(addr);
+                    break;
+
+                case BLOB_QUOTATION:
+                    /* Push its address */
+                    cells[count++] = encode_lit((int64_t)addr);
+                    break;
+
+                case BLOB_DATA:
+                    /* Push the value */
+                    {
+                        int64_t value = *(int64_t*)addr;
+                        cells[count++] = encode_lit(value);
+                    }
+                    break;
+
+                default:
+                    fprintf(stderr, "Error: Unknown blob kind %u in linking\n", id_or_kind);
+                    free(cells);
+                    return NULL;
+            }
+        }
+    }
+
+    /* Append EXIT */
+    if (count >= capacity) {
+        capacity++;
+        cells = realloc(cells, capacity * sizeof(cell_t));
+        if (!cells) return NULL;
+    }
+    cells[count++] = encode_exit();
+
+    /* Shrink to exact size */
+    cells = realloc(cells, count * sizeof(cell_t));
+
+    /* Track for cleanup */
+    track_buffer(loader, cells);
+
+    return (void*)cells;
 }

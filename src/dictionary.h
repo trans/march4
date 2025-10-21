@@ -25,7 +25,8 @@ typedef bool (*immediate_handler_t)(compiler_t* comp);
 typedef struct dict_entry {
     char* name;              /* Word name */
     void* addr;              /* Address (for primitives) or NULL */
-    char* cid;               /* Content ID (for user words) or NULL */
+    char* cid;               /* Content ID (for user words or primitives) */
+    uint16_t prim_id;        /* Primitive ID (LINKING.md design, 0 if not primitive) */
     type_sig_t signature;    /* Type signature */
     bool is_primitive;       /* true = asm primitive, false = user word */
     bool is_immediate;       /* true = compile-time word (like if, true, false) */
@@ -47,7 +48,7 @@ void dict_free(dictionary_t* dict);
 
 /* Add word to dictionary */
 bool dict_add(dictionary_t* dict, const char* name, void* addr,
-              const char* cid, type_sig_t* sig, bool is_primitive,
+              const char* cid, uint16_t prim_id, type_sig_t* sig, bool is_primitive,
               bool is_immediate, immediate_handler_t handler);
 
 /* Lookup word by name (returns first match) */

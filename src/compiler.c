@@ -63,17 +63,17 @@ void compiler_register_primitives(compiler_t* comp) {
     /* if: ( flag quot_true quot_false -- ... ) */
     /* Type checking handled dynamically based on quotations */
     parse_type_sig("->", &sig);  /* Minimal signature - real checking in handler */
-    dict_add(comp->dict, "if", NULL, NULL, &sig, false, true,
+    dict_add(comp->dict, "if", NULL, NULL, 0, &sig, false, true,
              (immediate_handler_t)compile_if);
 
     /* true: ( -- -1 ) */
     parse_type_sig("-> i64", &sig);
-    dict_add(comp->dict, "true", NULL, NULL, &sig, false, true,
+    dict_add(comp->dict, "true", NULL, NULL, 0, &sig, false, true,
              (immediate_handler_t)compile_true);
 
     /* false: ( -- 0 ) */
     parse_type_sig("-> i64", &sig);
-    dict_add(comp->dict, "false", NULL, NULL, &sig, false, true,
+    dict_add(comp->dict, "false", NULL, NULL, 0, &sig, false, true,
              (immediate_handler_t)compile_false);
 }
 
@@ -667,7 +667,7 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     /* Add to dictionary so it can be used in later definitions */
     type_sig_t sig;
     if (parse_type_sig(type_sig, &sig)) {
-        dict_add(comp->dict, word_name, NULL, NULL, &sig, false, false, NULL);
+        dict_add(comp->dict, word_name, NULL, NULL, 0, &sig, false, false, NULL);
     }
 
     free(source_text);

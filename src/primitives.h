@@ -69,6 +69,15 @@ extern void op_0branch(void);
 /* Quotation execution */
 extern void op_execute(void);
 
+/* ============================================================================ */
+/* Primitive Dispatch Table */
+/* ============================================================================ */
+
+/* Static dispatch table: maps primitive ID → runtime address
+ * This is a simple array lookup, much faster than CID-based hashtable
+ */
+extern void* primitive_dispatch_table[256];
+
 /* Register all primitives in dictionary */
 void register_primitives(dictionary_t* dict);
 

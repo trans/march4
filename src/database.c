@@ -428,3 +428,106 @@ uint64_t* db_load_word(march_db_t* db, const char* name, const char* namespace,
 
     return cells;
 }
+
+/* ============================================================================ */
+/* CID-based storage functions (LINKING.md design) */
+/* ============================================================================ */
+
+/* Store literal data, return CID (caller must free) */
+char* db_store_literal(march_db_t* db, int64_t value, const char* type_sig) {
+    if (!db) return NULL;
+
+    /* Serialize value as little-endian int64 */
+    uint8_t data[8];
+    for (int i = 0; i < 8; i++) {
+        data[i] = (value >> (i * 8)) & 0xFF;
+    }
+
+    /* Store type signature if provided */
+    char* sig_cid = NULL;
+    if (type_sig) {
+        sig_cid = db_store_type_sig(db, NULL, type_sig);
+    }
+
+    /* Store as BLOB_DATA */
+    char* cid = db_store_blob(db, BLOB_DATA, sig_cid, data, 8);
+
+    if (sig_cid) free(sig_cid);
+    return cid;
+}
+
+/* Load any blob by CID */
+bool db_load_blob_ex(march_db_t* db, const char* cid,
+                     int* kind, char** sig_cid,
+                     uint8_t** data, size_t* data_len) {
+    if (!db || !cid) return false;
+
+    const char* sql =
+        "SELECT kind, sig_cid, data, len FROM blobs WHERE cid = ?;";
+
+    sqlite3_stmt* stmt = NULL;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Failed to prepare blob load: %s\n", sqlite3_errmsg(db->db));
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, cid, -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        return false;
+    }
+
+    /* Get blob metadata */
+    if (kind) {
+        *kind = sqlite3_column_int(stmt, 0);
+    }
+
+    if (sig_cid) {
+        const char* sig = (const char*)sqlite3_column_text(stmt, 1);
+        *sig_cid = sig ? strdup(sig) : NULL;
+    }
+
+    /* Get blob data */
+    const void* blob = sqlite3_column_blob(stmt, 2);
+    int len = sqlite3_column_int(stmt, 3);
+
+    if (data && data_len) {
+        *data_len = len;
+        *data = malloc(len);
+        if (*data) {
+            memcpy(*data, blob, len);
+        }
+    }
+
+    sqlite3_finalize(stmt);
+    return true;
+}
+
+/* Get just the blob kind (fast lookup) */
+int db_get_blob_kind(march_db_t* db, const char* cid) {
+    if (!db || !cid) return -1;
+
+    const char* sql = "SELECT kind FROM blobs WHERE cid = ?;";
+
+    sqlite3_stmt* stmt = NULL;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, cid, -1, SQLITE_STATIC);
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    int kind = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+
+    return kind;
+}

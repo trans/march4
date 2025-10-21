@@ -128,3 +128,113 @@ void cell_buffer_append(cell_buffer_t* buf, cell_t cell) {
 void cell_buffer_clear(cell_buffer_t* buf) {
     buf->count = 0;
 }
+
+/* ============================================================================ */
+/* Blob buffer management (for CID-based storage) */
+/* ============================================================================ */
+
+blob_buffer_t* blob_buffer_create(void) {
+    blob_buffer_t* buf = malloc(sizeof(blob_buffer_t));
+    if (!buf) return NULL;
+
+    buf->capacity = 256;
+    buf->size = 0;
+    buf->data = malloc(buf->capacity);
+
+    if (!buf->data) {
+        free(buf);
+        return NULL;
+    }
+
+    return buf;
+}
+
+void blob_buffer_free(blob_buffer_t* buf) {
+    if (buf) {
+        free(buf->data);
+        free(buf);
+    }
+}
+
+void blob_buffer_clear(blob_buffer_t* buf) {
+    buf->size = 0;
+}
+
+void blob_buffer_append_u16(blob_buffer_t* buf, uint16_t value) {
+    /* Ensure capacity */
+    if (buf->size + 2 > buf->capacity) {
+        buf->capacity *= 2;
+        buf->data = realloc(buf->data, buf->capacity);
+    }
+
+    /* Write as little-endian */
+    buf->data[buf->size++] = value & 0xFF;
+    buf->data[buf->size++] = (value >> 8) & 0xFF;
+}
+
+void blob_buffer_append_bytes(blob_buffer_t* buf, const uint8_t* bytes, size_t len) {
+    /* Ensure capacity */
+    while (buf->size + len > buf->capacity) {
+        buf->capacity *= 2;
+        buf->data = realloc(buf->data, buf->capacity);
+    }
+
+    /* Copy bytes */
+    memcpy(buf->data + buf->size, bytes, len);
+    buf->size += len;
+}
+
+/* ============================================================================ */
+/* CID-based encoding functions (LINKING.md design) */
+/* ============================================================================ */
+
+/* Encode primitive reference - 2-byte tag only
+ * Tag format: (prim_id << 1) | 0
+ * Bit 0 = 0 means primitive (no CID follows)
+ */
+void encode_primitive(blob_buffer_t* buf, uint16_t prim_id) {
+    uint16_t tag = (prim_id << 1) | 0;  /* Bit 0 = 0 */
+    blob_buffer_append_u16(buf, tag);
+}
+
+/* Encode CID reference - 2-byte tag + 32-byte CID
+ * Tag format: (kind << 1) | 1
+ * Bit 0 = 1 means CID follows
+ */
+void encode_cid_ref(blob_buffer_t* buf, uint16_t kind, const char* cid) {
+    uint16_t tag = (kind << 1) | 1;  /* Bit 0 = 1 */
+    blob_buffer_append_u16(buf, tag);
+    blob_buffer_append_bytes(buf, (const uint8_t*)cid, CID_SIZE);
+}
+
+/* ============================================================================ */
+/* CID-based decoding functions (LINKING.md design) */
+/* ============================================================================ */
+
+/* Decode tag from blob data
+ * Returns: pointer to next position in blob
+ * Outputs:
+ *   is_cid: true if CID reference, false if primitive
+ *   id_or_kind: primitive ID or blob kind
+ *   cid: pointer to CID (if is_cid=true) or NULL
+ */
+const uint8_t* decode_tag_ex(const uint8_t* ptr, bool* is_cid, uint16_t* id_or_kind, const char** cid) {
+    /* Read 2-byte tag (little-endian) */
+    uint16_t tag = ptr[0] | (ptr[1] << 8);
+    ptr += 2;
+
+    /* Check bit 0 */
+    if (tag & 1) {
+        /* CID reference */
+        *is_cid = true;
+        *id_or_kind = tag >> 1;  /* Blob kind */
+        *cid = (const char*)ptr;
+        return ptr + CID_SIZE;  /* Skip CID */
+    } else {
+        /* Primitive */
+        *is_cid = false;
+        *id_or_kind = tag >> 1;  /* Primitive ID */
+        *cid = NULL;
+        return ptr;
+    }
+}
