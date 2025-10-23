@@ -19,12 +19,12 @@ PRAGMA foreign_keys = ON;
 --   sig_cid = SHA256("i64|bool")       → input="i64"      output="bool"    (predicate)
 
 CREATE TABLE type_signatures (
-    sig_cid     TEXT PRIMARY KEY,           -- SHA256("input_sig|output_sig")
+    sig_cid     BLOB PRIMARY KEY,            -- SHA256 binary hash (32 bytes)
     input_sig   TEXT NOT NULL DEFAULT '',   -- Input types (e.g., "i64 i64", "" for data)
     output_sig  TEXT NOT NULL,              -- Output types (e.g., "i64", "string", "[i64]")
     created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
 
-    CHECK (length(sig_cid) = 64)
+    CHECK (length(sig_cid) = 32)             -- Binary SHA256 is 32 bytes
 );
 
 CREATE INDEX idx_type_sigs_io ON type_signatures(input_sig, output_sig);
@@ -38,16 +38,16 @@ CREATE INDEX idx_type_sigs_io ON type_signatures(input_sig, output_sig);
 -- The CID (Content ID) is a SHA256 hash of the blob content.
 
 CREATE TABLE blobs (
-    cid         TEXT PRIMARY KEY,  -- SHA256 hash of content (hex encoded)
+    cid         BLOB PRIMARY KEY,  -- SHA256 binary hash (32 bytes)
     kind        INTEGER NOT NULL,  -- Type/format identifier (BLOB_CODE, BLOB_STRING, etc.)
-    sig_cid     TEXT,              -- Type signature reference (NULL for untyped blobs)
+    sig_cid     BLOB,              -- Type signature reference (NULL for untyped blobs)
     flags       INTEGER NOT NULL DEFAULT 0,  -- Metadata flags
     len         INTEGER NOT NULL,  -- Length in bytes
     data        BLOB NOT NULL,     -- The actual binary content
     created_at  INTEGER NOT NULL DEFAULT (unixepoch()),  -- Timestamp
 
     FOREIGN KEY (sig_cid) REFERENCES type_signatures(sig_cid) ON DELETE RESTRICT,
-    CHECK (length(cid) = 64),      -- SHA256 is 64 hex chars
+    CHECK (length(cid) = 32),      -- Binary SHA256 is 32 bytes
     CHECK (len = length(data))     -- Enforce consistency
 );
 
@@ -66,7 +66,7 @@ CREATE TABLE words (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL,         -- Word name (e.g., "hello", "+", "dup")
     namespace   TEXT DEFAULT 'user',   -- Namespace/module
-    def_cid     TEXT NOT NULL,         -- CID of definition (references blobs)
+    def_cid     BLOB NOT NULL,         -- CID of definition (binary, 32 bytes)
     type_sig    TEXT,                  -- Type signature (e.g., "int int -> int")
     is_primitive INTEGER NOT NULL DEFAULT 0,  -- 1 if machine code primitive, 0 if user word
     architecture TEXT,                 -- CPU arch (e.g., "x86-64", "aarch64") for primitives
@@ -96,9 +96,9 @@ CREATE INDEX idx_words_type ON words(type_sig);
 -- Links CIDs to their constituent parts and compilation info.
 
 CREATE TABLE defs (
-    cid             TEXT PRIMARY KEY,  -- CID of this definition (references blobs)
+    cid             BLOB PRIMARY KEY,  -- CID of this definition (references blobs)
     bytecode_version INTEGER NOT NULL DEFAULT 1,  -- Bytecode format version
-    sig_cid         TEXT,              -- Type signature reference
+    sig_cid         BLOB,              -- Type signature reference
     is_pure         INTEGER NOT NULL DEFAULT 0,   -- 1 if side-effect free
     effects         INTEGER NOT NULL DEFAULT 0,   -- Effect flags: IO=1, ERR=2, etc.
     escapes         INTEGER NOT NULL DEFAULT 0,   -- 1 if captures/escapes values
@@ -120,8 +120,8 @@ CREATE TABLE defs (
 -- elimination. An edge from A to B means "A references B".
 
 CREATE TABLE edges (
-    from_cid    TEXT NOT NULL,     -- Source CID
-    to_cid      TEXT NOT NULL,     -- Referenced CID
+    from_cid    BLOB NOT NULL,     -- Source CID
+    to_cid      BLOB NOT NULL,     -- Referenced CID
     edge_type   TEXT NOT NULL,     -- Type of reference: 'call', 'literal', 'data'
 
     FOREIGN KEY (from_cid) REFERENCES blobs(cid) ON DELETE CASCADE,
@@ -143,7 +143,7 @@ CREATE INDEX idx_edges_to ON edges(to_cid);
 CREATE TABLE modules (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL UNIQUE,  -- Module name
-    manifest_cid TEXT NOT NULL,        -- CID of module manifest (JSON/binary)
+    manifest_cid BLOB NOT NULL,        -- CID of module manifest (JSON/binary)
     version     TEXT,                  -- Semantic version
     is_root     INTEGER NOT NULL DEFAULT 0,  -- 1 if GC root
     created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -202,7 +202,7 @@ CREATE TABLE state (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL,
     namespace   TEXT DEFAULT 'user',
-    value_cid   TEXT NOT NULL,     -- CID of current value (frozen snapshot)
+    value_cid   BLOB NOT NULL,     -- CID of current value (frozen snapshot)
     type_sig    TEXT,              -- Type of the value
     updated_at  INTEGER NOT NULL DEFAULT (unixepoch()),
 
@@ -220,7 +220,7 @@ CREATE INDEX idx_state_name ON state(name, namespace);
 
 CREATE TABLE state_history (
     state_id    INTEGER NOT NULL,
-    value_cid   TEXT NOT NULL,
+    value_cid   BLOB NOT NULL,
     changed_at  INTEGER NOT NULL DEFAULT (unixepoch()),
 
     FOREIGN KEY (state_id) REFERENCES state(id) ON DELETE CASCADE,

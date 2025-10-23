@@ -102,7 +102,7 @@ typedef struct {
 #define MAX_TYPE_SIG      256
 #define MAX_CELL_STREAM   4096
 
-/* CID constants (SHA256 hashes are 32 bytes) */
+/* CID constants (SHA256 binary hashes are 32 bytes) */
 #define CID_SIZE 32
 
 /* Blob buffer for variable-length CID sequence encoding (LINKING.md design) */
@@ -122,9 +122,9 @@ void blob_buffer_append_bytes(blob_buffer_t* buf, const uint8_t* bytes, size_t l
 
 /* Blob encoding functions (LINKING.md design) */
 void encode_primitive(blob_buffer_t* buf, uint16_t prim_id);
-void encode_cid_ref(blob_buffer_t* buf, uint16_t kind, const char* cid);
+void encode_cid_ref(blob_buffer_t* buf, uint16_t kind, const unsigned char* cid);
 
 /* Blob decoding functions */
-const uint8_t* decode_tag_ex(const uint8_t* ptr, bool* is_cid, uint16_t* id_or_kind, const char** cid);
+const uint8_t* decode_tag_ex(const uint8_t* ptr, bool* is_cid, uint16_t* id_or_kind, const unsigned char** cid);
 
 #endif /* MARCH_TYPES_H */

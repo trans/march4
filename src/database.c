@@ -6,6 +6,7 @@
 
 #include "database.h"
 #include "types.h"
+#include "debug.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -96,24 +97,37 @@ bool db_init_schema(march_db_t* db, const char* schema_file) {
 }
 
 /* Compute SHA256 hash of data */
-char* compute_sha256(const uint8_t* data, size_t len) {
-    unsigned char hash[SHA256_DIGEST_LENGTH];
+/* Compute SHA256 and return raw 32-byte binary hash */
+unsigned char* compute_sha256(const uint8_t* data, size_t len) {
+    unsigned char* hash = malloc(SHA256_DIGEST_LENGTH);
+    if (!hash) return NULL;
+
     SHA256(data, len, hash);
 
-    /* Convert to hex string */
+    if (debug_enabled(DEBUG_CID)) {
+        char* hex = cid_to_hex(hash);
+        DEBUG_CID("Computed CID: %.16s... (len=%zu)", hex ? hex : "ERROR", len);
+        free(hex);
+    }
+
+    return hash;
+}
+
+/* Convert binary CID to hex string for display (caller must free) */
+char* cid_to_hex(const unsigned char* cid) {
     char* hex = malloc(65);  /* 64 hex chars + null */
     if (!hex) return NULL;
 
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        sprintf(hex + (i * 2), "%02x", hash[i]);
+    for (int i = 0; i < CID_SIZE; i++) {
+        sprintf(hex + (i * 2), "%02x", cid[i]);
     }
     hex[64] = '\0';
 
     return hex;
 }
 
-/* Store type signature in database (returns sig_cid, caller must free) */
-char* db_store_type_sig(march_db_t* db, const char* input_sig, const char* output_sig) {
+/* Store type signature in database (returns binary sig_cid, caller must free) */
+unsigned char* db_store_type_sig(march_db_t* db, const char* input_sig, const char* output_sig) {
     if (!db || !output_sig) return NULL;
 
     /* Default empty input_sig if NULL */
@@ -125,7 +139,7 @@ char* db_store_type_sig(march_db_t* db, const char* input_sig, const char* outpu
     if (!sig_str) return NULL;
 
     sprintf(sig_str, "%s|%s", input_sig, output_sig);
-    char* sig_cid = compute_sha256((uint8_t*)sig_str, sig_str_len);
+    unsigned char* sig_cid = compute_sha256((uint8_t*)sig_str, sig_str_len);
     free(sig_str);
 
     if (!sig_cid) return NULL;
@@ -143,7 +157,7 @@ char* db_store_type_sig(march_db_t* db, const char* input_sig, const char* outpu
         return NULL;
     }
 
-    sqlite3_bind_text(stmt, 1, sig_cid, -1, SQLITE_STATIC);
+    sqlite3_bind_blob(stmt, 1, sig_cid, CID_SIZE, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 2, input_sig, -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 3, output_sig, -1, SQLITE_STATIC);
 
@@ -159,13 +173,13 @@ char* db_store_type_sig(march_db_t* db, const char* input_sig, const char* outpu
     return sig_cid;  /* Caller must free */
 }
 
-/* Store blob directly in database (returns cid, caller must free) */
-char* db_store_blob(march_db_t* db, int kind, const char* sig_cid,
-                    const uint8_t* data, size_t data_len) {
+/* Store blob directly in database (returns binary cid, caller must free) */
+unsigned char* db_store_blob(march_db_t* db, int kind, const unsigned char* sig_cid,
+                              const uint8_t* data, size_t data_len) {
     if (!db || !data) return NULL;
 
     /* Compute CID */
-    char* cid = compute_sha256(data, data_len);
+    unsigned char* cid = compute_sha256(data, data_len);
     if (!cid) return NULL;
 
     /* Insert blob (ignore if exists) */
@@ -181,10 +195,10 @@ char* db_store_blob(march_db_t* db, int kind, const char* sig_cid,
         return NULL;
     }
 
-    sqlite3_bind_text(stmt, 1, cid, -1, SQLITE_STATIC);
+    sqlite3_bind_blob(stmt, 1, cid, CID_SIZE, SQLITE_STATIC);
     sqlite3_bind_int(stmt, 2, kind);
     if (sig_cid) {
-        sqlite3_bind_text(stmt, 3, sig_cid, -1, SQLITE_STATIC);
+        sqlite3_bind_blob(stmt, 3, sig_cid, CID_SIZE, SQLITE_STATIC);
     } else {
         sqlite3_bind_null(stmt, 3);
     }
@@ -200,6 +214,8 @@ char* db_store_blob(march_db_t* db, int kind, const char* sig_cid,
         return NULL;
     }
 
+    DEBUG_DB("Stored blob: kind=%d len=%zu", kind, data_len);
+
     return cid;  /* Caller must free */
 }
 
@@ -209,11 +225,11 @@ bool db_store_word(march_db_t* db, const char* name, const char* namespace,
                    const char* source_text) {
     /* Compute CID */
     size_t byte_count = cell_count * sizeof(uint64_t);
-    char* cid = compute_sha256(cells, byte_count);
+    unsigned char* cid = compute_sha256(cells, byte_count);
     if (!cid) return false;
 
     /* Parse type signature into input/output parts */
-    char* sig_cid = NULL;
+    unsigned char* sig_cid = NULL;
     if (type_sig && strlen(type_sig) > 0) {
         /* Parse "input -> output" or "-> output" */
         const char* arrow = strstr(type_sig, "->");
@@ -253,7 +269,7 @@ bool db_store_word(march_db_t* db, const char* name, const char* namespace,
     }
 
     /* Compute source hash if source text provided */
-    char* source_hash = NULL;
+    unsigned char* source_hash = NULL;
     if (source_text) {
         source_hash = compute_sha256((uint8_t*)source_text, strlen(source_text));
     }
@@ -277,10 +293,10 @@ bool db_store_word(march_db_t* db, const char* name, const char* namespace,
         return false;
     }
 
-    sqlite3_bind_text(stmt, 1, cid, -1, SQLITE_STATIC);
+    sqlite3_bind_blob(stmt, 1, cid, CID_SIZE, SQLITE_STATIC);
     sqlite3_bind_int(stmt, 2, BLOB_CODE);
     if (sig_cid) {
-        sqlite3_bind_text(stmt, 3, sig_cid, -1, SQLITE_STATIC);
+        sqlite3_bind_blob(stmt, 3, sig_cid, CID_SIZE, SQLITE_STATIC);
     } else {
         sqlite3_bind_null(stmt, 3);
     }
@@ -316,7 +332,7 @@ bool db_store_word(march_db_t* db, const char* name, const char* namespace,
 
     sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 2, namespace ? namespace : "user", -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 3, cid, -1, SQLITE_STATIC);
+    sqlite3_bind_blob(stmt, 3, cid, CID_SIZE, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 4, type_sig, -1, SQLITE_STATIC);
 
     rc = sqlite3_step(stmt);
@@ -348,14 +364,14 @@ bool db_store_word(march_db_t* db, const char* name, const char* namespace,
             return false;
         }
 
-        sqlite3_bind_text(stmt, 1, cid, -1, SQLITE_STATIC);
+        sqlite3_bind_blob(stmt, 1, cid, CID_SIZE, SQLITE_STATIC);
         if (sig_cid) {
-            sqlite3_bind_text(stmt, 2, sig_cid, -1, SQLITE_STATIC);
+            sqlite3_bind_blob(stmt, 2, sig_cid, CID_SIZE, SQLITE_STATIC);
         } else {
             sqlite3_bind_null(stmt, 2);
         }
         sqlite3_bind_text(stmt, 3, source_text, -1, SQLITE_STATIC);
-        sqlite3_bind_text(stmt, 4, source_hash, -1, SQLITE_STATIC);
+        sqlite3_bind_blob(stmt, 4, source_hash, CID_SIZE, SQLITE_STATIC);
 
         rc = sqlite3_step(stmt);
         sqlite3_finalize(stmt);
@@ -434,7 +450,7 @@ uint64_t* db_load_word(march_db_t* db, const char* name, const char* namespace,
 /* ============================================================================ */
 
 /* Store literal data, return CID (caller must free) */
-char* db_store_literal(march_db_t* db, int64_t value, const char* type_sig) {
+unsigned char* db_store_literal(march_db_t* db, int64_t value, const char* type_sig) {
     if (!db) return NULL;
 
     /* Serialize value as little-endian int64 */
@@ -444,21 +460,21 @@ char* db_store_literal(march_db_t* db, int64_t value, const char* type_sig) {
     }
 
     /* Store type signature if provided */
-    char* sig_cid = NULL;
+    unsigned char* sig_cid = NULL;
     if (type_sig) {
         sig_cid = db_store_type_sig(db, NULL, type_sig);
     }
 
     /* Store as BLOB_DATA */
-    char* cid = db_store_blob(db, BLOB_DATA, sig_cid, data, 8);
+    unsigned char* cid = db_store_blob(db, BLOB_DATA, sig_cid, data, 8);
 
     if (sig_cid) free(sig_cid);
     return cid;
 }
 
 /* Load any blob by CID */
-bool db_load_blob_ex(march_db_t* db, const char* cid,
-                     int* kind, char** sig_cid,
+bool db_load_blob_ex(march_db_t* db, const unsigned char* cid,
+                     int* kind, unsigned char** sig_cid,
                      uint8_t** data, size_t* data_len) {
     if (!db || !cid) return false;
 
@@ -472,7 +488,7 @@ bool db_load_blob_ex(march_db_t* db, const char* cid,
         return false;
     }
 
-    sqlite3_bind_text(stmt, 1, cid, -1, SQLITE_STATIC);
+    sqlite3_bind_blob(stmt, 1, cid, CID_SIZE, SQLITE_STATIC);
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_ROW) {
@@ -486,8 +502,15 @@ bool db_load_blob_ex(march_db_t* db, const char* cid,
     }
 
     if (sig_cid) {
-        const char* sig = (const char*)sqlite3_column_text(stmt, 1);
-        *sig_cid = sig ? strdup(sig) : NULL;
+        const void* sig_blob = sqlite3_column_blob(stmt, 1);
+        if (sig_blob) {
+            *sig_cid = malloc(CID_SIZE);
+            if (*sig_cid) {
+                memcpy(*sig_cid, sig_blob, CID_SIZE);
+            }
+        } else {
+            *sig_cid = NULL;
+        }
     }
 
     /* Get blob data */
@@ -507,7 +530,7 @@ bool db_load_blob_ex(march_db_t* db, const char* cid,
 }
 
 /* Get just the blob kind (fast lookup) */
-int db_get_blob_kind(march_db_t* db, const char* cid) {
+int db_get_blob_kind(march_db_t* db, const unsigned char* cid) {
     if (!db || !cid) return -1;
 
     const char* sql = "SELECT kind FROM blobs WHERE cid = ?;";
@@ -518,7 +541,7 @@ int db_get_blob_kind(march_db_t* db, const char* cid) {
         return -1;
     }
 
-    sqlite3_bind_text(stmt, 1, cid, -1, SQLITE_STATIC);
+    sqlite3_bind_blob(stmt, 1, cid, CID_SIZE, SQLITE_STATIC);
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_ROW) {

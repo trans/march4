@@ -6,6 +6,7 @@
 
 #include "compiler.h"
 #include "primitives.h"
+#include "debug.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -25,13 +26,17 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     comp->db = db;
     comp->type_stack_depth = 0;
     comp->cells = cell_buffer_create();
+    comp->blob = blob_buffer_create();  /* CID-based encoding buffer */
     comp->verbose = false;
     comp->quot_stack_depth = 0;
     comp->buffer_stack_depth = 0;
+    comp->blob_stack_depth = 0;
     comp->quot_counter = 0;
     comp->pending_quot_count = 0;
 
-    if (!comp->cells) {
+    if (!comp->cells || !comp->blob) {
+        if (comp->cells) cell_buffer_free(comp->cells);
+        if (comp->blob) blob_buffer_free(comp->blob);
         free(comp);
         return NULL;
     }
@@ -43,6 +48,7 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
 void compiler_free(compiler_t* comp) {
     if (comp) {
         cell_buffer_free(comp->cells);
+        blob_buffer_free(comp->blob);
         /* Free pending quotation CIDs */
         for (int i = 0; i < comp->pending_quot_count; i++) {
             free(comp->pending_quot_cids[i]);
@@ -54,6 +60,8 @@ void compiler_free(compiler_t* comp) {
 /* Register primitives */
 void compiler_register_primitives(compiler_t* comp) {
     type_sig_t sig;
+
+    DEBUG_COMPILER("Registering primitives...");
 
     /* Register assembly primitives */
     register_primitives(comp->dict);
@@ -75,6 +83,8 @@ void compiler_register_primitives(compiler_t* comp) {
     parse_type_sig("-> i64", &sig);
     dict_add(comp->dict, "false", NULL, NULL, 0, &sig, false, true,
              (immediate_handler_t)compile_false);
+
+    debug_dump_dict_stats(comp->dict);
 }
 
 /* Push type onto type stack */
@@ -126,8 +136,17 @@ static bool apply_signature(compiler_t* comp, type_sig_t* sig) {
 
 /* Compile a number literal */
 static bool compile_number(compiler_t* comp, int64_t num) {
-    /* Emit LIT cell */
+    /* Legacy: Emit LIT cell */
     cell_buffer_append(comp->cells, encode_lit(num));
+
+    /* CID-based: Store literal and encode reference */
+    unsigned char* cid = db_store_literal(comp->db, num, "i64");
+    if (!cid) {
+        fprintf(stderr, "Error: Failed to store literal %ld\n", num);
+        return false;
+    }
+    encode_cid_ref(comp->blob, BLOB_DATA, cid);
+    free(cid);
 
     /* Push i64 type */
     push_type(comp, TYPE_I64);
@@ -172,6 +191,8 @@ static bool compile_word(compiler_t* comp, const char* name) {
                              comp->type_stack_depth);
 
     if (!entry) {
+        DEBUG_COMPILER("Failed to find match for word: %s", name);
+        debug_dump_type_stack("Type stack at failure", comp->type_stack, comp->type_stack_depth);
         fprintf(stderr, "Type error: no matching overload for word: %s\n", name);
         return false;
     }
@@ -184,13 +205,22 @@ static bool compile_word(compiler_t* comp, const char* name) {
 
     /* Emit XT cell */
     if (entry->is_primitive) {
-        /* For primitives, emit XT with address */
+        /* Legacy: Emit XT with address */
         cell_buffer_append(comp->cells, encode_xt(entry->addr));
+
+        /* CID-based: Emit primitive ID (2 bytes) */
+        encode_primitive(comp->blob, entry->prim_id);
     } else {
-        /* For user words, we'll need to resolve CID to address later (linking) */
-        /* For now, just emit a placeholder - loader will patch this */
+        /* Legacy: Emit placeholder */
         cell_buffer_append(comp->cells, encode_xt(NULL));
-        fprintf(stderr, "Warning: user word linking not yet implemented: %s\n", name);
+
+        /* CID-based: Emit CID reference */
+        if (entry->cid) {
+            encode_cid_ref(comp->blob, BLOB_WORD, entry->cid);
+        } else {
+            fprintf(stderr, "Error: user word '%s' has no CID\n", name);
+            return false;
+        }
     }
 
     if (comp->verbose) {
@@ -214,7 +244,10 @@ static bool compile_lparen(compiler_t* comp) {
     if (!quot) return false;
 
     quot->cells = cell_buffer_create();
-    if (!quot->cells) {
+    quot->blob = blob_buffer_create();
+    if (!quot->cells || !quot->blob) {
+        if (quot->cells) cell_buffer_free(quot->cells);
+        if (quot->blob) blob_buffer_free(quot->blob);
         free(quot);
         return false;
     }
@@ -228,9 +261,11 @@ static bool compile_lparen(compiler_t* comp) {
     /* Push quotation onto stack */
     comp->quot_stack[comp->quot_stack_depth++] = quot;
 
-    /* Save current buffer and switch to quotation buffer */
+    /* Save current buffers and switch to quotation buffers */
     comp->buffer_stack[comp->buffer_stack_depth++] = comp->cells;
     comp->cells = quot->cells;
+    comp->blob_stack[comp->blob_stack_depth++] = comp->blob;
+    comp->blob = quot->blob;
 
     /* Reset type stack for quotation body */
     comp->type_stack_depth = 0;
@@ -266,8 +301,9 @@ static bool compile_rparen(compiler_t* comp) {
         quot->outputs[i] = comp->type_stack[i];
     }
 
-    /* Restore parent buffer */
+    /* Restore parent buffers */
     comp->cells = comp->buffer_stack[--comp->buffer_stack_depth];
+    comp->blob = comp->blob_stack[--comp->blob_stack_depth];
 
     /* Restore type stack (quotation inputs + outputs become new stack) */
     comp->type_stack_depth = quot->input_count;
@@ -342,12 +378,13 @@ static bool materialize_quotations(compiler_t* comp) {
         if (p > output_sig && p[-1] == ' ') p[-1] = '\0';
 
         /* Store type signature and get sig_cid */
-        char* sig_cid = db_store_type_sig(comp->db,
-                                          input_sig[0] ? input_sig : NULL,
-                                          output_sig);
+        unsigned char* sig_cid = db_store_type_sig(comp->db,
+                                                    input_sig[0] ? input_sig : NULL,
+                                                    output_sig);
         if (!sig_cid) {
             fprintf(stderr, "Failed to store quotation type signature\n");
             cell_buffer_free(quot->cells);
+            blob_buffer_free(quot->blob);
             free(quot);
             return false;
         }
@@ -357,16 +394,17 @@ static bool materialize_quotations(compiler_t* comp) {
                    input_sig[0] ? input_sig : "(none)", output_sig);
         }
 
-        /* Store quotation as anonymous blob */
-        size_t byte_count = quot->cells->count * sizeof(uint64_t);
-        char* cid = db_store_blob(comp->db, BLOB_CODE, sig_cid,
-                                  (uint8_t*)quot->cells->cells,
-                                  byte_count);
+        /* Store quotation as anonymous blob with BLOB_QUOTATION kind */
+        /* Use blob data (CID sequence), not cells */
+        unsigned char* cid = db_store_blob(comp->db, BLOB_QUOTATION, sig_cid,
+                                           quot->blob->data,
+                                           quot->blob->size);
         free(sig_cid);
 
         if (!cid) {
             fprintf(stderr, "Failed to store quotation blob\n");
             cell_buffer_free(quot->cells);
+            blob_buffer_free(quot->blob);
             free(quot);
             return false;
         }
@@ -376,6 +414,7 @@ static bool materialize_quotations(compiler_t* comp) {
             fprintf(stderr, "Too many quotation references in word (max %d)\n", MAX_QUOT_REFS);
             free(cid);
             cell_buffer_free(quot->cells);
+            blob_buffer_free(quot->blob);
             free(quot);
             return false;
         }
@@ -385,16 +424,18 @@ static bool materialize_quotations(compiler_t* comp) {
             printf("  Quotation CID: %s (index %d)\n", cid, comp->pending_quot_count - 1);
         }
 
-        /* TODO: Emit proper reference to quotation address */
-        /* For now, emit [LIT 0] as placeholder - needs linking */
+        /* Legacy: Emit [LIT 0] placeholder */
         cell_buffer_append(comp->cells, encode_lit(0));
-        fprintf(stderr, "Warning: quotation linking not yet implemented (CID: %.16s...)\n", cid);
+
+        /* CID-based: Emit quotation reference */
+        encode_cid_ref(comp->blob, BLOB_QUOTATION, cid);
 
         /* Push quotation type onto stack (as pointer for now) */
         push_type(comp, TYPE_PTR);
 
-        /* Free quotation */
+        /* Free quotation buffers */
         cell_buffer_free(quot->cells);
+        blob_buffer_free(quot->blob);
         free(quot);
     }
 
@@ -540,8 +581,9 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
         printf("\nCompiling word: %s\n", word_name);
     }
 
-    /* Reset cell buffer and type stack for new definition */
+    /* Reset buffers and type stack for new definition */
     cell_buffer_clear(comp->cells);
+    blob_buffer_clear(comp->blob);
     comp->type_stack_depth = 0;
 
     /* Build source text as we compile */
@@ -644,9 +686,10 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
         printf("  Source: %s\n", source_text);
         printf("  %zu cells, %zu bytes\n",
                comp->cells->count, comp->cells->count * 8);
+        printf("  %zu blob bytes\n", comp->blob->size);
     }
 
-    /* Store in database with source text */
+    /* Legacy: Store cells in database */
     bool stored = db_store_word(comp->db, word_name, "user",
                                 (uint8_t*)comp->cells->cells,
                                 comp->cells->count,
@@ -654,20 +697,46 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
                                 source_text);
 
     if (!stored) {
-        fprintf(stderr, "Failed to store word: %s\n", word_name);
+        fprintf(stderr, "Failed to store word (legacy): %s\n", word_name);
+        free(source_text);
+        free(word_name);
+        return false;
+    }
+
+    /* CID-based: Compute CID and store blob */
+    unsigned char* sig_cid = db_store_type_sig(comp->db, NULL, type_sig);
+    if (!sig_cid) {
+        fprintf(stderr, "Failed to store type signature for: %s\n", word_name);
+        free(source_text);
+        free(word_name);
+        return false;
+    }
+
+    unsigned char* word_cid = db_store_blob(comp->db, BLOB_WORD, sig_cid,
+                                             comp->blob->data,
+                                             comp->blob->size);
+    free(sig_cid);
+
+    if (!word_cid) {
+        fprintf(stderr, "Failed to store word blob: %s\n", word_name);
         free(source_text);
         free(word_name);
         return false;
     }
 
     if (comp->verbose) {
-        printf("  ✓ Stored word: %s\n", word_name);
+        char* cid_hex = cid_to_hex(word_cid);
+        printf("  ✓ Stored word: %s (CID: %.16s...)\n", word_name, cid_hex);
+        free(cid_hex);
     }
 
     /* Add to dictionary so it can be used in later definitions */
     type_sig_t sig;
     if (parse_type_sig(type_sig, &sig)) {
-        dict_add(comp->dict, word_name, NULL, NULL, 0, &sig, false, false, NULL);
+        /* Pass the CID so other words can reference it */
+        dict_add(comp->dict, word_name, NULL, word_cid, 0, &sig, false, false, NULL);
+    } else {
+        free(word_cid);
     }
 
     free(source_text);

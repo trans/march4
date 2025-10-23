@@ -16,9 +16,10 @@
 /* CID Cache Management */
 /* ============================================================================ */
 
-static unsigned int hash_cid_str(const char* cid) {
+static unsigned int hash_cid_binary(const unsigned char* cid) {
     unsigned int hash = 0;
-    for (int i = 0; i < 8 && cid[i]; i++) {
+    /* Hash first 8 bytes of CID */
+    for (int i = 0; i < 8; i++) {
         hash = hash * 31 + cid[i];
     }
     return hash % 256;
@@ -42,21 +43,20 @@ static void cid_cache_free(cid_cache_t* cache) {
     free(cache);
 }
 
-static void cid_cache_put(cid_cache_t* cache, const char* cid, void* addr) {
-    unsigned int bucket = hash_cid_str(cid);
+static void cid_cache_put(cid_cache_t* cache, const unsigned char* cid, void* addr) {
+    unsigned int bucket = hash_cid_binary(cid);
     cid_cache_entry_t* entry = malloc(sizeof(cid_cache_entry_t));
-    strncpy(entry->cid, cid, 64);
-    entry->cid[64] = '\0';
+    memcpy(entry->cid, cid, CID_SIZE);
     entry->addr = addr;
     entry->next = cache->buckets[bucket];
     cache->buckets[bucket] = entry;
 }
 
-static void* cid_cache_get(cid_cache_t* cache, const char* cid) {
-    unsigned int bucket = hash_cid_str(cid);
+static void* cid_cache_get(cid_cache_t* cache, const unsigned char* cid) {
+    unsigned int bucket = hash_cid_binary(cid);
     cid_cache_entry_t* entry = cache->buckets[bucket];
     while (entry) {
-        if (strcmp(entry->cid, cid) == 0) {
+        if (memcmp(entry->cid, cid, CID_SIZE) == 0) {
             return entry->addr;
         }
         entry = entry->next;
@@ -236,7 +236,7 @@ void* loader_get_primitive_addr(loader_t* loader, uint16_t prim_id) {
 /* Core linking function - recursively link a CID
  * Implements the algorithm from LINKING.md
  */
-void* loader_link_cid(loader_t* loader, const char* cid) {
+void* loader_link_cid(loader_t* loader, const unsigned char* cid) {
     /* Check cache first */
     void* cached = cid_cache_get(loader->cid_cache, cid);
     if (cached) {
@@ -245,12 +245,14 @@ void* loader_link_cid(loader_t* loader, const char* cid) {
 
     /* Load blob metadata from database */
     int kind = 0;
-    char* sig_cid = NULL;
+    unsigned char* sig_cid = NULL;
     uint8_t* blob_data = NULL;
     size_t blob_len = 0;
 
     if (!db_load_blob_ex(loader->db, cid, &kind, &sig_cid, &blob_data, &blob_len)) {
-        fprintf(stderr, "Error: Blob not found for CID %s\n", cid);
+        char* cid_hex = cid_to_hex(cid);
+        fprintf(stderr, "Error: Blob not found for CID %s\n", cid_hex);
+        free(cid_hex);
         return NULL;
     }
 
@@ -259,7 +261,11 @@ void* loader_link_cid(loader_t* loader, const char* cid) {
     switch (kind) {
         case BLOB_PRIMITIVE:
             /* Primitives should never be referenced by CID - they use 2-byte IDs in blob encoding */
-            fprintf(stderr, "Error: Primitive referenced by CID %s (primitives should use ID-based encoding)\n", cid);
+            {
+                char* cid_hex = cid_to_hex(cid);
+                fprintf(stderr, "Error: Primitive referenced by CID %s (primitives should use ID-based encoding)\n", cid_hex);
+                free(cid_hex);
+            }
             break;
 
         case BLOB_WORD:
@@ -278,7 +284,11 @@ void* loader_link_cid(loader_t* loader, const char* cid) {
             break;
 
         default:
-            fprintf(stderr, "Error: Unknown blob kind %d for CID %s\n", kind, cid);
+            {
+                char* cid_hex = cid_to_hex(cid);
+                fprintf(stderr, "Error: Unknown blob kind %d for CID %s\n", kind, cid_hex);
+                free(cid_hex);
+            }
             break;
     }
 
@@ -310,7 +320,7 @@ void* loader_link_code(loader_t* loader, const uint8_t* blob_data, size_t blob_l
     while (ptr < end) {
         bool is_cid;
         uint16_t id_or_kind;
-        const char* cid;
+        const unsigned char* cid;
 
         /* Decode next tag */
         ptr = decode_tag_ex(ptr, &is_cid, &id_or_kind, &cid);

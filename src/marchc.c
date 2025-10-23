@@ -3,15 +3,19 @@
  * Main entry point for the C compiler
  */
 
+#define _POSIX_C_SOURCE 200809L
+
 #include "compiler.h"
 #include "loader.h"
 #include "runner.h"
 #include "database.h"
 #include "dictionary.h"
+#include "debug.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <ctype.h>
 
 static void print_usage(const char* prog) {
     printf("March Language Compiler (C version)\n\n");
@@ -19,12 +23,15 @@ static void print_usage(const char* prog) {
     printf("Options:\n");
     printf("  -o <db>       Output database file (default: march.db)\n");
     printf("  -v            Verbose output\n");
+    printf("  -d <cats>     Enable debug output (comma-separated: compiler,dict,types,cid,loader,db,all)\n");
     printf("  -r <word>     Run word after compilation\n");
     printf("  -s            Show stack after execution\n");
     printf("  -h            Show this help\n\n");
     printf("Examples:\n");
     printf("  %s hello.march                    # Compile to march.db\n", prog);
     printf("  %s -v -o my.db hello.march        # Verbose, custom DB\n", prog);
+    printf("  %s -d dict,types hello.march      # Debug dictionary and types\n", prog);
+    printf("  %s -d all hello.march             # Debug all categories\n", prog);
     printf("  %s -r main hello.march            # Compile and run 'main'\n", prog);
     printf("  %s -r main -s hello.march         # Run and show stack\n", prog);
 }
@@ -36,14 +43,53 @@ int main(int argc, char** argv) {
     bool show_stack = false;
     int opt;
 
+    /* Initialize debug system from environment */
+    debug_init();
+
     /* Parse options */
-    while ((opt = getopt(argc, argv, "o:r:vsh")) != -1) {
+    while ((opt = getopt(argc, argv, "o:r:d:vsh")) != -1) {
         switch (opt) {
             case 'o':
                 output_db = optarg;
                 break;
             case 'r':
                 run_word = optarg;
+                break;
+            case 'd':
+                {
+                    /* Parse comma-separated debug categories */
+                    char* str = strdup(optarg);
+                    char* token = strtok(str, ",");
+                    while (token) {
+                        /* Trim whitespace */
+                        while (isspace(*token)) token++;
+                        char* end = token + strlen(token) - 1;
+                        while (end > token && isspace(*end)) *end-- = '\0';
+
+                        /* Enable category */
+                        if (strcmp(token, "all") == 0) {
+                            debug_enable(DEBUG_ALL);
+                        } else if (strcmp(token, "compiler") == 0) {
+                            debug_enable(DEBUG_COMPILER);
+                        } else if (strcmp(token, "dict") == 0) {
+                            debug_enable(DEBUG_DICT);
+                        } else if (strcmp(token, "types") == 0) {
+                            debug_enable(DEBUG_TYPES);
+                        } else if (strcmp(token, "cid") == 0) {
+                            debug_enable(DEBUG_CID);
+                        } else if (strcmp(token, "loader") == 0) {
+                            debug_enable(DEBUG_LOADER);
+                        } else if (strcmp(token, "runtime") == 0) {
+                            debug_enable(DEBUG_RUNTIME);
+                        } else if (strcmp(token, "db") == 0) {
+                            debug_enable(DEBUG_DB);
+                        } else {
+                            fprintf(stderr, "Warning: Unknown debug category '%s'\n", token);
+                        }
+                        token = strtok(NULL, ",");
+                    }
+                    free(str);
+                }
                 break;
             case 'v':
                 verbose = true;

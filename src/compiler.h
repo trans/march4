@@ -19,7 +19,8 @@
 
 /* Quotation (compile-time only) */
 typedef struct {
-    cell_buffer_t* cells;
+    cell_buffer_t* cells;          /* Legacy: runtime cells */
+    blob_buffer_t* blob;           /* CID-based: blob encoding */
     type_id_t inputs[MAX_TYPE_STACK];
     int input_count;
     type_id_t outputs[MAX_TYPE_STACK];
@@ -32,7 +33,8 @@ typedef struct compiler {
     march_db_t* db;
     type_id_t type_stack[MAX_TYPE_STACK];
     int type_stack_depth;
-    cell_buffer_t* cells;
+    cell_buffer_t* cells;          /* Legacy: runtime cells (deprecated) */
+    blob_buffer_t* blob;           /* CID-based blob encoding (LINKING.md) */
     bool verbose;
 
     /* Quotation compilation support */
@@ -43,11 +45,15 @@ typedef struct compiler {
     cell_buffer_t* buffer_stack[MAX_QUOT_DEPTH + 1];  /* +1 for root */
     int buffer_stack_depth;
 
+    /* Blob buffer stack for nested quotations (CID-based) */
+    blob_buffer_t* blob_stack[MAX_QUOT_DEPTH + 1];    /* +1 for root */
+    int blob_stack_depth;
+
     /* Runtime quotation counter for generating unique names (deprecated) */
     int quot_counter;
 
     /* Pending quotation CID references (for linking) */
-    char* pending_quot_cids[MAX_QUOT_REFS];
+    unsigned char* pending_quot_cids[MAX_QUOT_REFS];
     int pending_quot_count;
 } compiler_t;
 

@@ -28,7 +28,18 @@ void runner_free(runner_t* runner) {
 
 /* Execute a word by name */
 bool runner_execute(runner_t* runner, const char* name) {
-    /* Load word if not already loaded */
+    /* Try CID-based linking first */
+    dict_entry_t* entry = dict_lookup(runner->loader->dict, name);
+    if (entry && entry->cid) {
+        /* CID-based path: link and execute */
+        void* linked_code = loader_link_cid(runner->loader, entry->cid);
+        if (linked_code) {
+            vm_run((cell_t*)linked_code);
+            return true;
+        }
+    }
+
+    /* Fallback to legacy cell-based loading */
     loaded_word_t* word = loader_find_word(runner->loader, name);
     if (!word) {
         word = loader_load_word(runner->loader, name, "user");

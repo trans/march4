@@ -22,8 +22,8 @@ typedef struct {
 
 /* CID-to-address cache entry (for linking) */
 typedef struct cid_cache_entry {
-    char cid[65];           /* CID hex string */
-    void* addr;             /* Runtime address */
+    unsigned char cid[CID_SIZE];  /* Binary CID (32 bytes) */
+    void* addr;                    /* Runtime address */
     struct cid_cache_entry* next;
 } cid_cache_entry_t;
 
@@ -74,7 +74,7 @@ void* loader_get_entry_point(loader_t* loader, const char* name);
 /* Core linking function - recursively link a CID
  * Returns runtime address of linked code
  */
-void* loader_link_cid(loader_t* loader, const char* cid);
+void* loader_link_cid(loader_t* loader, const unsigned char* cid);
 
 /* Link a code blob (CID sequence) into runtime cells
  * Returns runtime address of linked code

@@ -5,6 +5,8 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "dictionary.h"
+#include "types.h"
+#include "debug.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -56,7 +58,7 @@ void dict_free(dictionary_t* dict) {
 }
 
 bool dict_add(dictionary_t* dict, const char* name, void* addr,
-              const char* cid, uint16_t prim_id, type_sig_t* sig, bool is_primitive,
+              const unsigned char* cid, uint16_t prim_id, type_sig_t* sig, bool is_primitive,
               bool is_immediate, immediate_handler_t handler) {
     unsigned long hash = hash_string(name);
     size_t bucket = hash % dict->bucket_count;
@@ -67,7 +69,15 @@ bool dict_add(dictionary_t* dict, const char* name, void* addr,
 
     entry->name = strdup(name);
     entry->addr = addr;
-    entry->cid = cid ? strdup(cid) : NULL;
+    /* Copy binary CID if provided */
+    if (cid) {
+        entry->cid = malloc(CID_SIZE);
+        if (entry->cid) {
+            memcpy(entry->cid, cid, CID_SIZE);
+        }
+    } else {
+        entry->cid = NULL;
+    }
     entry->prim_id = prim_id;
     entry->is_primitive = is_primitive;
     entry->is_immediate = is_immediate;
@@ -93,6 +103,12 @@ bool dict_add(dictionary_t* dict, const char* name, void* addr,
     entry->next = dict->buckets[bucket];
     dict->buckets[bucket] = entry;
     dict->entry_count++;
+
+    /* Debug trace */
+    DEBUG_DICT("Registered: %s %s prim_id=%u",
+               name,
+               is_primitive ? "primitive" : "word",
+               prim_id);
 
     return true;
 }
@@ -146,14 +162,20 @@ dict_entry_t* dict_lookup_typed(dictionary_t* dict, const char* name,
     unsigned long hash = hash_string(name);
     size_t bucket = hash % dict->bucket_count;
 
+    DEBUG_DICT("Looking up '%s' with stack depth=%d", name, stack_depth);
+    debug_dump_type_stack("Stack state", type_stack, stack_depth);
+
     dict_entry_t* best = NULL;
     int best_score = -1;
+    int candidates = 0;
 
     /* Find all candidates and pick the best match */
     dict_entry_t* entry = dict->buckets[bucket];
     while (entry) {
         if (strcmp(entry->name, name) == 0) {
+            candidates++;
             int score = match_score(&entry->signature, type_stack, stack_depth);
+            DEBUG_TYPES("  Candidate '%s': score=%d (best=%d)", name, score, best_score);
             if (score > best_score) {
                 best = entry;
                 best_score = score;
@@ -165,6 +187,12 @@ dict_entry_t* dict_lookup_typed(dictionary_t* dict, const char* name,
             }
         }
         entry = entry->next;
+    }
+
+    if (best) {
+        DEBUG_DICT("  Found match: '%s' score=%d", name, best_score);
+    } else {
+        DEBUG_DICT("  No match for '%s' (%d candidates checked)", name, candidates);
     }
 
     return best;

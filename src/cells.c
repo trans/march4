@@ -197,14 +197,14 @@ void encode_primitive(blob_buffer_t* buf, uint16_t prim_id) {
     blob_buffer_append_u16(buf, tag);
 }
 
-/* Encode CID reference - 2-byte tag + 32-byte CID
+/* Encode CID reference - 2-byte tag + 32-byte binary CID
  * Tag format: (kind << 1) | 1
  * Bit 0 = 1 means CID follows
  */
-void encode_cid_ref(blob_buffer_t* buf, uint16_t kind, const char* cid) {
+void encode_cid_ref(blob_buffer_t* buf, uint16_t kind, const unsigned char* cid) {
     uint16_t tag = (kind << 1) | 1;  /* Bit 0 = 1 */
     blob_buffer_append_u16(buf, tag);
-    blob_buffer_append_bytes(buf, (const uint8_t*)cid, CID_SIZE);
+    blob_buffer_append_bytes(buf, cid, CID_SIZE);
 }
 
 /* ============================================================================ */
@@ -218,7 +218,7 @@ void encode_cid_ref(blob_buffer_t* buf, uint16_t kind, const char* cid) {
  *   id_or_kind: primitive ID or blob kind
  *   cid: pointer to CID (if is_cid=true) or NULL
  */
-const uint8_t* decode_tag_ex(const uint8_t* ptr, bool* is_cid, uint16_t* id_or_kind, const char** cid) {
+const uint8_t* decode_tag_ex(const uint8_t* ptr, bool* is_cid, uint16_t* id_or_kind, const unsigned char** cid) {
     /* Read 2-byte tag (little-endian) */
     uint16_t tag = ptr[0] | (ptr[1] << 8);
     ptr += 2;
@@ -228,7 +228,7 @@ const uint8_t* decode_tag_ex(const uint8_t* ptr, bool* is_cid, uint16_t* id_or_k
         /* CID reference */
         *is_cid = true;
         *id_or_kind = tag >> 1;  /* Blob kind */
-        *cid = (const char*)ptr;
+        *cid = ptr;
         return ptr + CID_SIZE;  /* Skip CID */
     } else {
         /* Primitive */
