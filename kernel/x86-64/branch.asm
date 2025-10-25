@@ -23,7 +23,4 @@ op_branch:
     shl rax, 3                  ; offset * 8
     add rbx, rax                ; IP += offset * 8
 
-    ; Update saved IP on return stack (VM will restore it)
-    mov [rdi], rbx
-
     jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

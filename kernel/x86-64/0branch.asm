@@ -33,16 +33,10 @@ op_0branch:
     shl rax, 3                  ; offset * 8
     add rbx, rax                ; IP += offset * 8
 
-    ; Update saved IP on return stack (VM will restore it)
-    mov [rdi], rbx
-
     jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)
 
 .skip_branch:
     ; Flag is non-zero: just skip the offset cell
     add rbx, 8                  ; Skip offset LIT
-
-    ; Update saved IP on return stack (VM will restore it)
-    mov [rdi], rbx
 
     jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

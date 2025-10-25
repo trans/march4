@@ -357,7 +357,7 @@ static bool compile_rparen(compiler_t* comp) {
         for (int i = 0; i < quot->output_count; i++) {
             printf("%d ", quot->outputs[i]);
         }
-        printf(" (%zu cells)\n", quot->cells->count);
+        printf(" (%zu cells, %zu blob bytes)\n", quot->cells->count, quot->blob->size);
     }
 
     /* Note: quotation stays on quot_stack for immediate word to consume */
@@ -507,8 +507,9 @@ static bool compile_if(compiler_t* comp) {
     pop_type(comp);
 
     if (comp->verbose) {
-        printf("  IF compiling with true=%zu cells, false=%zu cells\n",
-               true_quot->cells->count, false_quot->cells->count);
+        printf("  IF compiling with true=%zu cells (%zu blob bytes), false=%zu cells (%zu blob bytes)\n",
+               true_quot->cells->count, true_quot->blob->size,
+               false_quot->cells->count, false_quot->blob->size);
     }
 
     /* Look up branch primitives */
@@ -552,6 +553,59 @@ static bool compile_if(compiler_t* comp) {
     int64_t branch_offset = (int64_t)(comp->cells->count - branch_offset_pos - 1);
     comp->cells->cells[branch_offset_pos] = encode_lit(branch_offset);
 
+    /* ===== CID-based blob encoding ===== */
+    /* Emit 0BRANCH primitive */
+    encode_primitive(comp->blob, zbranch_entry->prim_id);
+
+    /* Calculate and emit 0branch offset */
+    /* Offset = true branch size + 2 (for BRANCH primitive + its offset) */
+    int64_t zbranch_offset_blob = (int64_t)(true_quot->cells->count - 1 + 2);
+    unsigned char* zbranch_offset_cid = db_store_literal(comp->db, zbranch_offset_blob, "i64");
+    if (!zbranch_offset_cid) {
+        fprintf(stderr, "Error: Failed to store 0branch offset literal\n");
+        cell_buffer_free(true_quot->cells);
+        blob_buffer_free(true_quot->blob);
+        free(true_quot);
+        cell_buffer_free(false_quot->cells);
+        blob_buffer_free(false_quot->blob);
+        free(false_quot);
+        return false;
+    }
+    encode_cid_ref(comp->blob, BLOB_DATA, zbranch_offset_cid);
+    free(zbranch_offset_cid);
+
+    /* Inline true quotation blob data */
+    if (comp->verbose) {
+        printf("  IF inlining true branch: %zu blob bytes\n", true_quot->blob->size);
+    }
+    blob_buffer_append_bytes(comp->blob, true_quot->blob->data, true_quot->blob->size);
+
+    /* Emit BRANCH primitive */
+    encode_primitive(comp->blob, branch_entry->prim_id);
+
+    /* Calculate and emit branch offset */
+    /* Offset = false branch size */
+    int64_t branch_offset_blob = (int64_t)(false_quot->cells->count - 1);
+    unsigned char* branch_offset_cid = db_store_literal(comp->db, branch_offset_blob, "i64");
+    if (!branch_offset_cid) {
+        fprintf(stderr, "Error: Failed to store branch offset literal\n");
+        cell_buffer_free(true_quot->cells);
+        blob_buffer_free(true_quot->blob);
+        free(true_quot);
+        cell_buffer_free(false_quot->cells);
+        blob_buffer_free(false_quot->blob);
+        free(false_quot);
+        return false;
+    }
+    encode_cid_ref(comp->blob, BLOB_DATA, branch_offset_cid);
+    free(branch_offset_cid);
+
+    /* Inline false quotation blob data */
+    if (comp->verbose) {
+        printf("  IF inlining false branch: %zu blob bytes\n", false_quot->blob->size);
+    }
+    blob_buffer_append_bytes(comp->blob, false_quot->blob->data, false_quot->blob->size);
+
     /* Apply quotation output types to current stack */
     /* Both branches should have same output types - use true_quot */
     for (int i = 0; i < true_quot->output_count; i++) {
@@ -560,8 +614,10 @@ static bool compile_if(compiler_t* comp) {
 
     /* Free quotations */
     cell_buffer_free(true_quot->cells);
+    blob_buffer_free(true_quot->blob);
     free(true_quot);
     cell_buffer_free(false_quot->cells);
+    blob_buffer_free(false_quot->blob);
     free(false_quot);
 
     if (comp->verbose) {
@@ -574,7 +630,18 @@ static bool compile_if(compiler_t* comp) {
 
 /* Immediate word: true - emit literal -1 */
 static bool compile_true(compiler_t* comp) {
+    /* Legacy: Emit LIT cell */
     cell_buffer_append(comp->cells, encode_lit(-1));
+
+    /* CID-based: Store literal and encode reference */
+    unsigned char* cid = db_store_literal(comp->db, -1, "i64");
+    if (!cid) {
+        fprintf(stderr, "Error: Failed to store true literal\n");
+        return false;
+    }
+    encode_cid_ref(comp->blob, BLOB_DATA, cid);
+    free(cid);
+
     push_type(comp, TYPE_I64);
 
     if (comp->verbose) {
@@ -586,7 +653,18 @@ static bool compile_true(compiler_t* comp) {
 
 /* Immediate word: false - emit literal 0 */
 static bool compile_false(compiler_t* comp) {
+    /* Legacy: Emit LIT cell */
     cell_buffer_append(comp->cells, encode_lit(0));
+
+    /* CID-based: Store literal and encode reference */
+    unsigned char* cid = db_store_literal(comp->db, 0, "i64");
+    if (!cid) {
+        fprintf(stderr, "Error: Failed to store false literal\n");
+        return false;
+    }
+    encode_cid_ref(comp->blob, BLOB_DATA, cid);
+    free(cid);
+
     push_type(comp, TYPE_I64);
 
     if (comp->verbose) {
