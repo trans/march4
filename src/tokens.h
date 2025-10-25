@@ -20,6 +20,7 @@ typedef enum {
     TOK_SEMICOLON,   /* ; (end definition) */
     TOK_LPAREN,      /* ( (start quotation) */
     TOK_RPAREN,      /* ) (end quotation) */
+    TOK_DOLLAR,      /* $ (type signature declaration) */
     TOK_COMMENT,     /* -- comment (skip) */
 } token_type_t;
 

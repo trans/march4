@@ -3,6 +3,7 @@
 ; Stack effect: Pop one, push -1 (true) if n > 0, 0 (false) otherwise
 
 section .text
+extern vm_dispatch
 global op_zerogt
 
 op_zerogt:
@@ -15,4 +16,4 @@ op_zerogt:
     movzx rax, al           ; Zero-extend to 64-bit
     neg rax                 ; Convert 1 to -1
     mov [rsi], rax          ; Store flag
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

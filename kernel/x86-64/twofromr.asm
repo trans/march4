@@ -4,6 +4,7 @@
 ; Note: n2 is TOS on both stacks
 
 section .text
+extern vm_dispatch
 global op_twofromr
 
 op_twofromr:
@@ -18,4 +19,4 @@ op_twofromr:
     sub rsi, 16             ; Allocate space on data stack
     mov [rsi + 8], rax      ; Push n1 (will be second on data stack)
     mov [rsi], rbx          ; Push n2 (will be TOS on data stack)
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

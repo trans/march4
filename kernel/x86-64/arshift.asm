@@ -3,6 +3,7 @@
 ; Stack effect: Pop value and count, push value >>> count
 
 section .text
+extern vm_dispatch
 global op_arshift
 
 op_arshift:
@@ -15,4 +16,4 @@ op_arshift:
     sar rax, cl             ; Arithmetic right shift (sign-extend)
     add rsi, 8              ; Drop one item
     mov [rsi], rax          ; Store result
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

@@ -1,0 +1,17 @@
+-- Test polymorphic type variables
+
+-- swap should work with any two types
+$ i64 i64 -> i64 i64 ;
+: test-swap 10 20 swap drop ;
+
+-- dup works on any type
+$ i64 -> i64 i64 ;
+: test-dup 5 dup ;
+
+-- over should maintain types correctly
+$ i64 i64 -> i64 i64 i64 ;
+: test-over 1 2 over ;
+
+-- Test with no type signature (infer from literals)
+: five 5 ;
+: ten 10 ;

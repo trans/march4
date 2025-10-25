@@ -4,6 +4,7 @@
 ; Convention: -1 (all bits set) = true, 0 = false
 
 section .text
+extern vm_dispatch
 global op_eq
 
 op_eq:
@@ -18,4 +19,4 @@ op_eq:
     neg rax                 ; Convert 1 to -1 (0xFFFFFFFFFFFFFFFF)
     add rsi, 8              ; Drop one item
     mov [rsi], rax          ; Store flag
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

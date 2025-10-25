@@ -3,6 +3,7 @@
 ; Stack effect: Push copy of return stack TOS to data stack
 
 section .text
+extern vm_dispatch
 global op_rfetch
 
 op_rfetch:
@@ -13,4 +14,4 @@ op_rfetch:
     mov rax, [rdi]          ; Load value from return stack (non-destructive)
     sub rsi, 8              ; Allocate space on data stack
     mov [rsi], rax          ; Push copy to data stack
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

@@ -6,6 +6,7 @@
 
 section .text
     global op_branch
+    extern vm_dispatch
 
 op_branch:
     ; rdi = return stack pointer (TOS has saved IP)
@@ -25,4 +26,4 @@ op_branch:
     ; Update saved IP on return stack (VM will restore it)
     mov [rdi], rbx
 
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

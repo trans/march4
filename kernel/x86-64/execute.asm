@@ -4,6 +4,7 @@
 ; Stack effect: Pop address, execute word at that address
 
 section .text
+extern vm_dispatch
 global op_execute
 
 op_execute:
@@ -23,4 +24,4 @@ op_execute:
     call rax
 
 .done:
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

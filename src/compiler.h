@@ -37,6 +37,9 @@ typedef struct compiler {
     blob_buffer_t* blob;           /* CID-based blob encoding (LINKING.md) */
     bool verbose;
 
+    /* Type signature for next word definition (from $ declaration) */
+    type_sig_t* pending_type_sig;
+
     /* Quotation compilation support */
     quotation_t* quot_stack[MAX_QUOT_DEPTH];
     int quot_stack_depth;

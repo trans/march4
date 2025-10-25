@@ -4,6 +4,7 @@
 ; Note: n2 is TOS on both stacks
 
 section .text
+extern vm_dispatch
 global op_twotor
 
 op_twotor:
@@ -18,4 +19,4 @@ op_twotor:
     sub rdi, 16             ; Allocate space on return stack
     mov [rdi + 8], rax      ; Push n1 (will be second on return stack)
     mov [rdi], rbx          ; Push n2 (will be TOS on return stack)
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

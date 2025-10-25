@@ -3,6 +3,7 @@
 ; Stack effect: Pop two, push product
 
 section .text
+extern vm_dispatch
 global op_mul
 
 op_mul:
@@ -14,4 +15,4 @@ op_mul:
     imul rax, [rsi]         ; Multiply by b (signed)
     add rsi, 8              ; Drop one item
     mov [rsi], rax          ; Store result
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

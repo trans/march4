@@ -3,6 +3,7 @@
 ; Stack effect: Swap TOS and second item
 
 section .text
+extern vm_dispatch
 global op_swap
 
 op_swap:
@@ -14,4 +15,4 @@ op_swap:
     mov rbx, [rsi + 8]      ; Load a
     mov [rsi], rbx          ; Store a at TOS
     mov [rsi + 8], rax      ; Store b at second
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

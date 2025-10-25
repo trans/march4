@@ -6,6 +6,7 @@
 
 section .text
     global op_0branch
+    extern vm_dispatch
 
 op_0branch:
     ; rsi = data stack pointer
@@ -35,7 +36,7 @@ op_0branch:
     ; Update saved IP on return stack (VM will restore it)
     mov [rdi], rbx
 
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)
 
 .skip_branch:
     ; Flag is non-zero: just skip the offset cell
@@ -44,4 +45,4 @@ op_0branch:
     ; Update saved IP on return stack (VM will restore it)
     mov [rdi], rbx
 
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

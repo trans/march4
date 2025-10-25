@@ -71,12 +71,12 @@ void* primitive_dispatch_table[256] = {
 void register_primitives(dictionary_t* dict) {
     type_sig_t sig;
 
-    /* Stack ops */
-    REG_PRIM("dup", PRIM_DUP, op_dup, "i64 -> i64 i64");
-    REG_PRIM("drop", PRIM_DROP, op_drop, "i64 ->");
-    REG_PRIM("swap", PRIM_SWAP, op_swap, "i64 i64 -> i64 i64");
-    REG_PRIM("over", PRIM_OVER, op_over, "i64 i64 -> i64 i64 i64");
-    REG_PRIM("rot", PRIM_ROT, op_rot, "i64 i64 i64 -> i64 i64 i64");
+    /* Stack ops - polymorphic (work on any type) */
+    REG_PRIM("dup", PRIM_DUP, op_dup, "a -> a a");
+    REG_PRIM("drop", PRIM_DROP, op_drop, "a ->");
+    REG_PRIM("swap", PRIM_SWAP, op_swap, "a b -> b a");
+    REG_PRIM("over", PRIM_OVER, op_over, "a b -> a b a");
+    REG_PRIM("rot", PRIM_ROT, op_rot, "a b c -> b c a");
 
     /* Arithmetic */
     REG_PRIM("+", PRIM_ADD, op_add, "i64 i64 -> i64");
@@ -116,20 +116,20 @@ void register_primitives(dictionary_t* dict) {
     REG_PRIM("c@", PRIM_CFETCH, op_cfetch, "ptr -> i64");
     REG_PRIM("c!", PRIM_CSTORE, op_cstore, "i64 ptr ->");
 
-    /* Return stack */
-    REG_PRIM(">r", PRIM_TOR, op_tor, "i64 ->");
-    REG_PRIM("r>", PRIM_FROMR, op_fromr, "-> i64");
-    REG_PRIM("r@", PRIM_RFETCH, op_rfetch, "-> i64");
+    /* Return stack - polymorphic */
+    REG_PRIM(">r", PRIM_TOR, op_tor, "a ->");
+    REG_PRIM("r>", PRIM_FROMR, op_fromr, "-> a");
+    REG_PRIM("r@", PRIM_RFETCH, op_rfetch, "-> a");
     REG_PRIM("rdrop", PRIM_RDROP, op_rdrop, "->");
-    REG_PRIM("2>r", PRIM_TWOTOR, op_twotor, "i64 i64 ->");
-    REG_PRIM("2r>", PRIM_TWOFROMR, op_twofromr, "-> i64 i64");
+    REG_PRIM("2>r", PRIM_TWOTOR, op_twotor, "a b ->");
+    REG_PRIM("2r>", PRIM_TWOFROMR, op_twofromr, "-> a b");
 
     /* Control flow */
     REG_PRIM("branch", PRIM_BRANCH, op_branch, "->");
     REG_PRIM("0branch", PRIM_0BRANCH, op_0branch, "i64 ->");
 
-    /* Quotation execution */
-    REG_PRIM("execute", PRIM_EXECUTE, op_execute, "ptr ->");
+    /* Quotation execution - polymorphic ptr */
+    REG_PRIM("execute", PRIM_EXECUTE, op_execute, "a ->");
 }
 
 #undef REG_PRIM

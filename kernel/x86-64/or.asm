@@ -3,6 +3,7 @@
 ; Stack effect: Pop two, push bitwise OR
 
 section .text
+extern vm_dispatch
 global op_or
 
 op_or:
@@ -14,4 +15,4 @@ op_or:
     or rax, [rsi]           ; Bitwise OR with b
     add rsi, 8              ; Drop one item
     mov [rsi], rax          ; Store result
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

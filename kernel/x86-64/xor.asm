@@ -3,6 +3,7 @@
 ; Stack effect: Pop two, push bitwise XOR
 
 section .text
+extern vm_dispatch
 global op_xor
 
 op_xor:
@@ -14,4 +15,4 @@ op_xor:
     xor rax, [rsi]          ; Bitwise XOR with b
     add rsi, 8              ; Drop one item
     mov [rsi], rax          ; Store result
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

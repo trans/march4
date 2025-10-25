@@ -1,0 +1,7 @@
+-- Test with pre-populated stack
+
+$  i64 -> i64 ;
+: double dup + ;
+
+-- This pushes 7, then calls double (which pops 7, duplicates it, adds -> 14)
+: test-seven 7 double ;

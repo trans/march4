@@ -4,6 +4,7 @@
 ; Note: 0 -> -1 (true), non-zero -> 0 (false)
 
 section .text
+extern vm_dispatch
 global op_lnot
 
 op_lnot:
@@ -23,4 +24,4 @@ op_lnot:
 
 .done:
     mov [rsi], rax          ; Store result
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

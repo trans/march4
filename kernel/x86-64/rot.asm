@@ -3,6 +3,7 @@
 ; Stack effect: Third item moves to top
 
 section .text
+extern vm_dispatch
 global op_rot
 
 op_rot:
@@ -18,4 +19,4 @@ op_rot:
     mov [rsi], rcx          ; Store a at TOS
     mov [rsi + 8], rax      ; Store c at second
     mov [rsi + 16], rbx     ; Store b at third
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

@@ -28,6 +28,7 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     comp->cells = cell_buffer_create();
     comp->blob = blob_buffer_create();  /* CID-based encoding buffer */
     comp->verbose = false;
+    comp->pending_type_sig = NULL;
     comp->quot_stack_depth = 0;
     comp->buffer_stack_depth = 0;
     comp->blob_stack_depth = 0;
@@ -49,6 +50,10 @@ void compiler_free(compiler_t* comp) {
     if (comp) {
         cell_buffer_free(comp->cells);
         blob_buffer_free(comp->blob);
+        /* Free pending type signature */
+        if (comp->pending_type_sig) {
+            free(comp->pending_type_sig);
+        }
         /* Free pending quotation CIDs */
         for (int i = 0; i < comp->pending_quot_count; i++) {
             free(comp->pending_quot_cids[i]);
@@ -114,21 +119,52 @@ static bool apply_signature(compiler_t* comp, type_sig_t* sig) {
         return false;
     }
 
-    /* Pop inputs and verify types */
+    /* Type variable bindings for unification (a-z) */
+    type_id_t bindings[26];
+    for (int i = 0; i < 26; i++) {
+        bindings[i] = TYPE_UNKNOWN;  /* Unbound */
+    }
+
+    /* Collect input types and build bindings */
+    type_id_t input_types[MAX_TYPE_STACK];
+    for (int i = 0; i < sig->input_count; i++) {
+        int stack_pos = comp->type_stack_depth - sig->input_count + i;
+        input_types[i] = comp->type_stack[stack_pos];
+    }
+
+    /* Pop inputs and verify types, binding type variables */
     for (int i = sig->input_count - 1; i >= 0; i--) {
         type_id_t expected = sig->inputs[i];
         type_id_t actual = pop_type(comp);
 
-        /* TYPE_ANY matches anything */
-        if (expected != TYPE_ANY && actual != TYPE_ANY && expected != actual) {
+        /* Handle type variables */
+        if (expected >= TYPE_VAR_A && expected <= TYPE_VAR_Z) {
+            int var_idx = expected - TYPE_VAR_A;
+            if (bindings[var_idx] == TYPE_UNKNOWN) {
+                bindings[var_idx] = actual;
+            } else if (bindings[var_idx] != actual) {
+                fprintf(stderr, "Type variable binding conflict\n");
+                return false;
+            }
+        } else if (expected != TYPE_ANY && actual != TYPE_ANY && expected != actual) {
             fprintf(stderr, "Type mismatch: expected %d, got %d\n", expected, actual);
             return false;
         }
     }
 
-    /* Push outputs */
+    /* Push outputs, resolving type variables */
     for (int i = 0; i < sig->output_count; i++) {
-        push_type(comp, sig->outputs[i]);
+        type_id_t output_type = sig->outputs[i];
+
+        /* Resolve type variable to bound type */
+        if (output_type >= TYPE_VAR_A && output_type <= TYPE_VAR_Z) {
+            int var_idx = output_type - TYPE_VAR_A;
+            if (bindings[var_idx] != TYPE_UNKNOWN) {
+                output_type = bindings[var_idx];
+            }
+        }
+
+        push_type(comp, output_type);
     }
 
     return true;
@@ -216,6 +252,7 @@ static bool compile_word(compiler_t* comp, const char* name) {
 
         /* CID-based: Emit CID reference */
         if (entry->cid) {
+            DEBUG_COMPILER("Encoding call to user word '%s'", name);
             encode_cid_ref(comp->blob, BLOB_WORD, entry->cid);
         } else {
             fprintf(stderr, "Error: user word '%s' has no CID\n", name);
@@ -559,6 +596,64 @@ static bool compile_false(compiler_t* comp) {
     return true;
 }
 
+/* Compile type signature declaration: $ i64 -- i64 i64 ; */
+static bool compile_type_sig_decl(compiler_t* comp, token_stream_t* stream) {
+    /* Build type signature string from tokens until ';' */
+    char sig_buffer[256];
+    sig_buffer[0] = '\0';
+    size_t sig_len = 0;
+
+    token_t tok;
+    while (token_stream_next(stream, &tok)) {
+        if (tok.type == TOK_SEMICOLON) {
+            token_free(&tok);
+            break;
+        }
+
+        /* Append token text to signature (with space separator) */
+        if (sig_len > 0 && sig_len < 255) {
+            sig_buffer[sig_len++] = ' ';
+        }
+
+        size_t tok_len = strlen(tok.text);
+        if (sig_len + tok_len < 255) {
+            strcpy(sig_buffer + sig_len, tok.text);
+            sig_len += tok_len;
+        }
+
+        /* Replace -- with -> for consistency */
+        if (strcmp(tok.text, "--") == 0 && sig_len >= 2) {
+            sig_buffer[sig_len - 2] = '-';
+            sig_buffer[sig_len - 1] = '>';
+        }
+
+        token_free(&tok);
+    }
+
+    if (comp->verbose) {
+        printf("\nType signature declaration: %s\n", sig_buffer);
+    }
+
+    /* Allocate and parse type signature */
+    if (comp->pending_type_sig) {
+        free(comp->pending_type_sig);
+    }
+    comp->pending_type_sig = malloc(sizeof(type_sig_t));
+    if (!comp->pending_type_sig) {
+        fprintf(stderr, "Failed to allocate type signature\n");
+        return false;
+    }
+
+    if (!parse_type_sig(sig_buffer, comp->pending_type_sig)) {
+        fprintf(stderr, "Failed to parse type signature: %s\n", sig_buffer);
+        free(comp->pending_type_sig);
+        comp->pending_type_sig = NULL;
+        return false;
+    }
+
+    return true;
+}
+
 /* Compile a word definition */
 static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     /* Read word name */
@@ -585,6 +680,17 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     cell_buffer_clear(comp->cells);
     blob_buffer_clear(comp->blob);
     comp->type_stack_depth = 0;
+
+    /* If there's a pending type signature, pre-populate type stack with inputs */
+    if (comp->pending_type_sig) {
+        for (int i = 0; i < comp->pending_type_sig->input_count; i++) {
+            push_type(comp, comp->pending_type_sig->inputs[i]);
+        }
+        if (comp->verbose) {
+            printf("  Using type signature with %d inputs\n",
+                   comp->pending_type_sig->input_count);
+        }
+    }
 
     /* Build source text as we compile */
     char* source_text = malloc(4096);  /* Initial buffer */
@@ -666,15 +772,23 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     if (comp->type_stack_depth > 0) {
         strcpy(type_sig, "-> ");
         for (int i = 0; i < comp->type_stack_depth; i++) {
-            switch (comp->type_stack[i]) {
-                case TYPE_I64: strcat(type_sig, "i64 "); break;
-                case TYPE_U64: strcat(type_sig, "u64 "); break;
-                case TYPE_F64: strcat(type_sig, "f64 "); break;
-                case TYPE_PTR: strcat(type_sig, "ptr "); break;
-                case TYPE_BOOL: strcat(type_sig, "bool "); break;
-                case TYPE_STR: strcat(type_sig, "str "); break;
-                case TYPE_ANY: strcat(type_sig, "any "); break;
-                case TYPE_UNKNOWN: strcat(type_sig, "? "); break;
+            type_id_t t = comp->type_stack[i];
+            /* Handle type variables */
+            if (t >= TYPE_VAR_A && t <= TYPE_VAR_Z) {
+                char var[3] = {(char)('a' + (t - TYPE_VAR_A)), ' ', '\0'};
+                strcat(type_sig, var);
+            } else {
+                switch (t) {
+                    case TYPE_I64: strcat(type_sig, "i64 "); break;
+                    case TYPE_U64: strcat(type_sig, "u64 "); break;
+                    case TYPE_F64: strcat(type_sig, "f64 "); break;
+                    case TYPE_PTR: strcat(type_sig, "ptr "); break;
+                    case TYPE_BOOL: strcat(type_sig, "bool "); break;
+                    case TYPE_STR: strcat(type_sig, "str "); break;
+                    case TYPE_ANY: strcat(type_sig, "any "); break;
+                    case TYPE_UNKNOWN: strcat(type_sig, "? "); break;
+                    default: strcat(type_sig, "? "); break;
+                }
             }
         }
     } else {
@@ -724,11 +838,7 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
         return false;
     }
 
-    if (comp->verbose) {
-        char* cid_hex = cid_to_hex(word_cid);
-        printf("  ✓ Stored word: %s (CID: %.16s...)\n", word_name, cid_hex);
-        free(cid_hex);
-    }
+    DEBUG_COMPILER("Stored word '%s' (blob_size=%zu)", word_name, comp->blob->size);
 
     /* Add to dictionary so it can be used in later definitions */
     type_sig_t sig;
@@ -741,6 +851,13 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
 
     free(source_text);
     free(word_name);
+
+    /* Clear pending type signature after using it */
+    if (comp->pending_type_sig) {
+        free(comp->pending_type_sig);
+        comp->pending_type_sig = NULL;
+    }
+
     return true;
 }
 
@@ -760,7 +877,10 @@ bool compiler_compile_file(compiler_t* comp, const char* filename) {
     while (token_stream_next(stream, &tok)) {
         bool success = true;
 
-        if (tok.type == TOK_COLON) {
+        if (tok.type == TOK_DOLLAR) {
+            /* Type signature declaration */
+            success = compile_type_sig_decl(comp, stream);
+        } else if (tok.type == TOK_COLON) {
             /* Start word definition */
             success = compile_definition(comp, stream);
         } else if (tok.type == TOK_NUMBER || tok.type == TOK_WORD) {

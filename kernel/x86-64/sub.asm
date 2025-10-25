@@ -3,6 +3,7 @@
 ; Stack effect: Pop two, push difference
 
 section .text
+extern vm_dispatch
 global op_sub
 
 op_sub:
@@ -14,4 +15,4 @@ op_sub:
     sub rax, [rsi]          ; Subtract b
     add rsi, 8              ; Drop one item
     mov [rsi], rax          ; Store result
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

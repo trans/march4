@@ -4,6 +4,7 @@
 
 section .text
 global op_add
+extern vm_dispatch
 
 op_add:
     ; rsi = data stack pointer
@@ -14,4 +15,4 @@ op_add:
     add rax, [rsi]          ; Add b
     add rsi, 8              ; Drop one item
     mov [rsi], rax          ; Store result
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

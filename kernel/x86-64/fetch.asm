@@ -3,6 +3,7 @@
 ; Stack effect: Pop address, push value at that address
 
 section .text
+extern vm_dispatch
 global op_fetch
 
 op_fetch:
@@ -12,4 +13,4 @@ op_fetch:
     mov rax, [rsi]          ; Load address
     mov rax, [rax]          ; Fetch value from that address
     mov [rsi], rax          ; Store value on stack
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

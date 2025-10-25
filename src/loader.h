@@ -45,6 +45,12 @@ typedef struct {
     size_t buffer_count;
     size_t buffer_capacity;
 
+    /* Track mmap'd buffers separately (need munmap, not free) */
+    void** mmap_buffers;
+    size_t* mmap_sizes;
+    size_t mmap_count;
+    size_t mmap_capacity;
+
     /* Legacy: loaded words list (deprecated in favor of CID cache) */
     loaded_word_t** words;
     size_t word_count;

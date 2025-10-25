@@ -8,9 +8,14 @@
 #include "loader.h"
 #include "cells.h"
 #include "primitives.h"
+#include "debug.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <sys/mman.h>  /* For mmap/mprotect to create executable memory */
+
+/* External reference to DOCOL (from docol.asm) */
+extern void docol(void);
 
 /* ============================================================================ */
 /* CID Cache Management */
@@ -89,6 +94,20 @@ loader_t* loader_create(march_db_t* db, dictionary_t* dict) {
         return NULL;
     }
 
+    /* Initialize mmap buffer tracking */
+    loader->mmap_capacity = 64;
+    loader->mmap_count = 0;
+    loader->mmap_buffers = calloc(loader->mmap_capacity, sizeof(void*));
+    loader->mmap_sizes = calloc(loader->mmap_capacity, sizeof(size_t));
+    if (!loader->mmap_buffers || !loader->mmap_sizes) {
+        free(loader->allocated_buffers);
+        free(loader->mmap_buffers);
+        free(loader->mmap_sizes);
+        cid_cache_free(loader->cid_cache);
+        free(loader);
+        return NULL;
+    }
+
     /* Legacy word list */
     loader->word_capacity = 64;
     loader->word_count = 0;
@@ -121,11 +140,18 @@ void loader_free(loader_t* loader) {
         }
         free(loader->words);
 
-        /* Free allocated buffers (from linking) */
+        /* Free allocated buffers (malloc'd) */
         for (size_t i = 0; i < loader->buffer_count; i++) {
             free(loader->allocated_buffers[i]);
         }
         free(loader->allocated_buffers);
+
+        /* Free mmap'd buffers (DOCOL wrappers) */
+        for (size_t i = 0; i < loader->mmap_count; i++) {
+            munmap(loader->mmap_buffers[i], loader->mmap_sizes[i]);
+        }
+        free(loader->mmap_buffers);
+        free(loader->mmap_sizes);
 
         /* Free CID cache */
         cid_cache_free(loader->cid_cache);
@@ -218,6 +244,71 @@ static void track_buffer(loader_t* loader, void* buffer) {
     loader->allocated_buffers[loader->buffer_count++] = buffer;
 }
 
+/* Helper: track mmap'd buffer for cleanup */
+static void track_mmap_buffer(loader_t* loader, void* buffer, size_t size) {
+    if (loader->mmap_count >= loader->mmap_capacity) {
+        loader->mmap_capacity *= 2;
+        loader->mmap_buffers = realloc(loader->mmap_buffers,
+                                      loader->mmap_capacity * sizeof(void*));
+        loader->mmap_sizes = realloc(loader->mmap_sizes,
+                                    loader->mmap_capacity * sizeof(size_t));
+    }
+    loader->mmap_buffers[loader->mmap_count] = buffer;
+    loader->mmap_sizes[loader->mmap_count] = size;
+    loader->mmap_count++;
+}
+
+/* Create a machine code wrapper for a user word
+ * The wrapper loads the cell stream address into rax and jumps to docol
+ * Returns: executable memory containing the wrapper code
+ */
+static void* create_docol_wrapper(loader_t* loader, void* cells_addr) {
+    /* Allocate executable memory (15 bytes for the wrapper code) */
+    size_t code_size = 32;  /* Rounded up for alignment */
+    void* code = mmap(NULL, code_size, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (code == MAP_FAILED) {
+        fprintf(stderr, "Error: Failed to allocate executable memory\n");
+        return NULL;
+    }
+
+    /* Generate machine code:
+     *   movabs rax, <cells_addr>    ; 48 B8 [8 bytes]
+     *   movabs r11, docol           ; 49 BB [8 bytes]
+     *   jmp r11                     ; 41 FF E3
+     */
+    uint8_t* p = (uint8_t*)code;
+
+    /* movabs rax, imm64 (load cell address) */
+    *p++ = 0x48;  /* REX.W prefix */
+    *p++ = 0xB8;  /* MOV rax, imm64 opcode */
+    *(uint64_t*)p = (uint64_t)cells_addr;
+    p += 8;
+
+    /* movabs r11, imm64 (load docol address) */
+    *p++ = 0x49;  /* REX.W + REX.B prefix */
+    *p++ = 0xBB;  /* MOV r11, imm64 opcode */
+    *(uint64_t*)p = (uint64_t)docol;
+    p += 8;
+
+    /* jmp r11 (absolute jump via register) */
+    *p++ = 0x41;  /* REX.B prefix */
+    *p++ = 0xFF;  /* JMP r/m64 opcode */
+    *p++ = 0xE3;  /* ModR/M: 11 100 011 = jmp r11 */
+
+    /* Make the code executable */
+    if (mprotect(code, code_size, PROT_READ | PROT_EXEC) != 0) {
+        fprintf(stderr, "Error: Failed to make wrapper executable\n");
+        munmap(code, code_size);
+        return NULL;
+    }
+
+    /* Track for cleanup (use munmap, not free) */
+    track_mmap_buffer(loader, code, code_size);
+
+    return code;
+}
+
 /* Get primitive runtime address by ID */
 void* loader_get_primitive_addr(loader_t* loader, uint16_t prim_id) {
     /* Simple array lookup using the dispatch table */
@@ -308,6 +399,8 @@ void* loader_link_cid(loader_t* loader, const unsigned char* cid) {
  * Implements the algorithm from LINKING.md
  */
 void* loader_link_code(loader_t* loader, const uint8_t* blob_data, size_t blob_len, int kind) {
+    DEBUG_LOADER("Linking code blob: len=%zu kind=%d", blob_len, kind);
+
     /* Allocate runtime cell buffer (estimate size, expand if needed) */
     size_t capacity = 64;
     size_t count = 0;
@@ -339,14 +432,18 @@ void* loader_link_code(loader_t* loader, const uint8_t* blob_data, size_t blob_l
                 free(cells);
                 return NULL;
             }
-            cells[count++] = encode_xt(prim_addr);
+            cell_t encoded = encode_xt(prim_addr);
+            DEBUG_LOADER("  Primitive #%u -> addr=%p", id_or_kind, prim_addr);
+            cells[count++] = encoded;
         } else {
             /* CID reference: recursively link */
+            DEBUG_LOADER("  CID reference kind=%u", id_or_kind);
             void* addr = loader_link_cid(loader, cid);
             if (!addr) {
                 free(cells);
                 return NULL;
             }
+            DEBUG_LOADER("  Linked to addr=%p", addr);
 
             /* The kind field determines how to use this reference */
             switch (id_or_kind) {
@@ -365,6 +462,7 @@ void* loader_link_code(loader_t* loader, const uint8_t* blob_data, size_t blob_l
                     /* Push the value */
                     {
                         int64_t value = *(int64_t*)addr;
+                        DEBUG_LOADER("  BLOB_DATA: value=%ld", value);
                         cells[count++] = encode_lit(value);
                     }
                     break;
@@ -385,11 +483,25 @@ void* loader_link_code(loader_t* loader, const uint8_t* blob_data, size_t blob_l
     }
     cells[count++] = encode_exit();
 
+    DEBUG_LOADER("Linked %zu cells", count);
+
     /* Shrink to exact size */
     cells = realloc(cells, count * sizeof(cell_t));
 
     /* Track for cleanup */
     track_buffer(loader, cells);
 
+    /* For BLOB_WORD, create a DOCOL wrapper so the VM can call it as machine code */
+    if (kind == BLOB_WORD) {
+        void* wrapper = create_docol_wrapper(loader, (void*)cells);
+        if (!wrapper) {
+            fprintf(stderr, "Error: Failed to create DOCOL wrapper\n");
+            return NULL;
+        }
+        DEBUG_LOADER("Created wrapper for user word");
+        return wrapper;
+    }
+
+    /* For quotations, just return the cells directly */
     return (void*)cells;
 }

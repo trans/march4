@@ -1,0 +1,8 @@
+-- Super simple test program
+
+: five 5 ;
+
+: ten 10 ;
+
+$ i64 -> i64 ;
+: double dup + ;

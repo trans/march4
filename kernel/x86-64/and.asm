@@ -3,6 +3,7 @@
 ; Stack effect: Pop two, push bitwise AND
 
 section .text
+extern vm_dispatch
 global op_and
 
 op_and:
@@ -14,4 +15,4 @@ op_and:
     and rax, [rsi]          ; Bitwise AND with b
     add rsi, 8              ; Drop one item
     mov [rsi], rax          ; Store result
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

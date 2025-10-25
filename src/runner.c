@@ -3,6 +3,7 @@
  */
 
 #include "runner.h"
+#include "cells.h"  /* For encode_xt, encode_exit */
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -34,8 +35,19 @@ bool runner_execute(runner_t* runner, const char* name) {
         /* CID-based path: link and execute */
         void* linked_code = loader_link_cid(runner->loader, entry->cid);
         if (linked_code) {
-            vm_run((cell_t*)linked_code);
+            /* The linked code is a DOCOL wrapper (machine code).
+             * Create a tiny cell stream that calls it, then pass to vm_run.
+             * This ensures the VM state (rsi/rdi/rbx) is properly initialized.
+             */
+            cell_t bootstrap[2];
+            bootstrap[0] = encode_xt(linked_code);  /* Call the wrapper */
+            bootstrap[1] = encode_exit();            /* EXIT */
+
+            vm_run(bootstrap);
             return true;
+        } else {
+            fprintf(stderr, "Error: Failed to link word '%s'\n", name);
+            return false;
         }
     }
 

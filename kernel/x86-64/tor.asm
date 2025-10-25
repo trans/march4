@@ -3,6 +3,7 @@
 ; Stack effect: Pop from data stack, push to return stack
 
 section .text
+extern vm_dispatch
 global op_tor
 
 op_tor:
@@ -14,4 +15,4 @@ op_tor:
     add rsi, 8              ; Drop from data stack
     sub rdi, 8              ; Allocate space on return stack
     mov [rdi], rax          ; Push to return stack
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

@@ -3,6 +3,7 @@
 ; Stack effect: Pop two, push -1 (true) or 0 (false)
 
 section .text
+extern vm_dispatch
 global op_lor
 
 op_lor:
@@ -25,4 +26,4 @@ op_lor:
 .done:
     add rsi, 8              ; Drop one item
     mov [rsi], rax          ; Store result
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

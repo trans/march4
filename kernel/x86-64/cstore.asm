@@ -3,6 +3,7 @@
 ; Stack effect: Pop byte and address, write byte to address
 
 section .text
+extern vm_dispatch
 global op_cstore
 
 op_cstore:
@@ -14,4 +15,4 @@ op_cstore:
     mov rbx, [rsi + 8]      ; Load byte value (low byte of rbx)
     mov [rax], bl           ; Store low byte at address
     add rsi, 16             ; Drop both items
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

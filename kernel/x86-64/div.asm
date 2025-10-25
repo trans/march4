@@ -4,6 +4,7 @@
 ; Note: Remainder is discarded (use /mod for both)
 
 section .text
+extern vm_dispatch
 global op_div
 
 op_div:
@@ -16,4 +17,4 @@ op_div:
     idiv qword [rsi]        ; Signed divide by b, quotient in rax
     add rsi, 8              ; Drop one item
     mov [rsi], rax          ; Store quotient
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

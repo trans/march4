@@ -3,6 +3,7 @@
 ; Stack effect: Pop address, push byte value
 
 section .text
+extern vm_dispatch
 global op_cfetch
 
 op_cfetch:
@@ -12,4 +13,4 @@ op_cfetch:
     mov rax, [rsi]          ; Load address
     movzx rax, byte [rax]   ; Fetch byte, zero-extend to 64-bit
     mov [rsi], rax          ; Store on stack
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

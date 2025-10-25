@@ -1,0 +1,16 @@
+-- Test type signatures
+
+-- Word with explicit type signature
+$ i64 -> i64 i64 ;
+: double dup + ;
+
+-- Word with only output (literal)
+: five 5 ;
+
+-- Word using other words
+$ i64 -> i64 ;
+: quadruple double double ;
+
+-- Word with input and different output
+$ i64 -> i64 ;
+: square dup * ;

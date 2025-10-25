@@ -1,0 +1,7 @@
+-- Test calling double with input
+
+$ i64 -> i64 ;
+: double dup + ;
+
+-- Call double with 7 on stack
+: fourteen 7 double ;

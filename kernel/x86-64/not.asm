@@ -3,6 +3,7 @@
 ; Stack effect: Pop one, push bitwise NOT
 
 section .text
+extern vm_dispatch
 global op_not
 
 op_not:
@@ -12,4 +13,4 @@ op_not:
     mov rax, [rsi]          ; Load a
     not rax                 ; Bitwise NOT
     mov [rsi], rax          ; Store result
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

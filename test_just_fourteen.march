@@ -1,0 +1,3 @@
+-- Just the fourteen word to isolate the issue
+
+: fourteen 14 ;

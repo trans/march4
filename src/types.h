@@ -88,6 +88,13 @@ typedef enum {
     TYPE_BOOL,     /* Boolean */
     TYPE_STR,      /* String reference (CID) */
     TYPE_ANY,      /* Polymorphic type variable */
+    /* Type variables (single-letter names: a, b, c, ...) */
+    TYPE_VAR_A, TYPE_VAR_B, TYPE_VAR_C, TYPE_VAR_D, TYPE_VAR_E,
+    TYPE_VAR_F, TYPE_VAR_G, TYPE_VAR_H, TYPE_VAR_I, TYPE_VAR_J,
+    TYPE_VAR_K, TYPE_VAR_L, TYPE_VAR_M, TYPE_VAR_N, TYPE_VAR_O,
+    TYPE_VAR_P, TYPE_VAR_Q, TYPE_VAR_R, TYPE_VAR_S, TYPE_VAR_T,
+    TYPE_VAR_U, TYPE_VAR_V, TYPE_VAR_W, TYPE_VAR_X, TYPE_VAR_Y,
+    TYPE_VAR_Z,
 } type_id_t;
 
 /* Type stack entry (compile-time only) */

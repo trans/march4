@@ -1,0 +1,5 @@
+-- Test user word calling user word
+
+: five 5 ;
+
+: ten-via-five five five + ;

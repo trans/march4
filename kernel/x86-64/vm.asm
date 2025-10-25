@@ -31,6 +31,7 @@ section .text
     global vm_halt
     global vm_get_dsp
     global vm_get_rsp
+    global vm_dispatch          ; Export dispatch loop for DOCOL
     global data_stack_base
 
 ; ============================================================================
@@ -89,7 +90,7 @@ vm_run:
 ; ============================================================================
 ; Inner Interpreter - Main dispatch loop
 ; ============================================================================
-.dispatch:
+vm_dispatch:
     ; Check if VM should halt
     mov rax, [rel vm_running]
     test rax, rax
@@ -129,18 +130,9 @@ vm_run:
     test rcx, rcx
     jz .do_exit
 
-    ; Save IP on return stack and call word
-    sub rdi, 8                  ; Allocate return stack slot
-    mov [rdi], rbx              ; Save IP
-
-    ; Jump to the word
-    call rcx                    ; Call the machine code
-
-    ; Restore IP from return stack
-    mov rbx, [rdi]              ; Load IP
-    add rdi, 8                  ; Drop return stack slot
-
-    jmp .dispatch
+    ; Direct threading: just jump to the address
+    ; Both primitives and user words (DOCOL) will jmp back to vm_dispatch
+    jmp rcx
 
 ; ----------------------------------------------------------------------------
 ; EXIT - Return from word (when XT addr=0)
@@ -157,7 +149,7 @@ vm_run:
     mov rbx, [rdi]              ; Load saved IP
     add rdi, 8                  ; Drop from return stack
 
-    jmp .dispatch
+    jmp vm_dispatch
 
 ; ----------------------------------------------------------------------------
 ; LIT (01) - Immediate 62-bit literal
@@ -171,7 +163,7 @@ vm_run:
     sub rsi, 8                  ; Allocate space
     mov [rsi], rax              ; Store literal
 
-    jmp .dispatch
+    jmp vm_dispatch
 
 ; ----------------------------------------------------------------------------
 ; LST (10) - Symbol literal
@@ -185,7 +177,7 @@ vm_run:
     sub rsi, 8
     mov [rsi], rax
 
-    jmp .dispatch
+    jmp vm_dispatch
 
 ; ----------------------------------------------------------------------------
 ; LNT (110) - Next N cells are raw literals
@@ -198,7 +190,7 @@ vm_run:
 
 .lnt_loop:
     test rdx, rdx
-    jz .dispatch                ; Done with literals
+    jz vm_dispatch              ; Done with literals
 
     mov rax, [rbx]              ; Load literal value
     add rbx, 8                  ; Advance IP
@@ -214,7 +206,7 @@ vm_run:
 ; ----------------------------------------------------------------------------
 .do_ext:
     ; For now, just skip (NOP)
-    jmp .dispatch
+    jmp vm_dispatch
 
 ; ----------------------------------------------------------------------------
 ; Error handling

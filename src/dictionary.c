@@ -137,13 +137,33 @@ static int match_score(type_sig_t* sig, type_id_t* type_stack, int stack_depth) 
 
     int score = 0;
 
+    /* Type variable bindings for unification (a-z) */
+    type_id_t bindings[26];
+    for (int i = 0; i < 26; i++) {
+        bindings[i] = TYPE_UNKNOWN;  /* Unbound */
+    }
+
     /* Check input types (stack grows down, so top is at stack_depth-1) */
     for (int i = 0; i < sig->input_count; i++) {
         int stack_pos = stack_depth - sig->input_count + i;
         type_id_t stack_type = type_stack[stack_pos];
         type_id_t sig_type = sig->inputs[i];
 
-        if (sig_type == TYPE_ANY) {
+        /* Handle type variables (a-z) */
+        if (sig_type >= TYPE_VAR_A && sig_type <= TYPE_VAR_Z) {
+            int var_idx = sig_type - TYPE_VAR_A;
+            if (bindings[var_idx] == TYPE_UNKNOWN) {
+                /* First occurrence - bind it */
+                bindings[var_idx] = stack_type;
+                score += 80;  /* Type variable match (less specific than exact) */
+            } else if (bindings[var_idx] == stack_type) {
+                /* Already bound - check consistency */
+                score += 80;
+            } else {
+                /* Inconsistent binding */
+                return -1;
+            }
+        } else if (sig_type == TYPE_ANY) {
             score += 10;  /* Polymorphic type matches anything */
         } else if (stack_type == sig_type) {
             score += 100; /* Exact match */
@@ -198,8 +218,14 @@ dict_entry_t* dict_lookup_typed(dictionary_t* dict, const char* name,
     return best;
 }
 
-/* Parse type string (e.g., "i64", "u64", "any") */
+/* Parse type string (e.g., "i64", "u64", "any", "a", "b") */
 static type_id_t parse_type(const char* str) {
+    /* Single-letter lowercase = type variable */
+    if (strlen(str) == 1 && str[0] >= 'a' && str[0] <= 'z') {
+        return TYPE_VAR_A + (str[0] - 'a');
+    }
+
+    /* Multi-character = concrete types */
     if (strcmp(str, "i64") == 0) return TYPE_I64;
     if (strcmp(str, "u64") == 0) return TYPE_U64;
     if (strcmp(str, "f64") == 0) return TYPE_F64;
@@ -249,6 +275,14 @@ bool parse_type_sig(const char* str, type_sig_t* sig) {
 
 /* Type to string */
 static const char* type_to_string(type_id_t type) {
+    /* Handle type variables (a-z) */
+    if (type >= TYPE_VAR_A && type <= TYPE_VAR_Z) {
+        static char buf[2];
+        buf[0] = 'a' + (type - TYPE_VAR_A);
+        buf[1] = '\0';
+        return buf;
+    }
+
     switch (type) {
         case TYPE_I64: return "i64";
         case TYPE_U64: return "u64";

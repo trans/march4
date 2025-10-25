@@ -3,6 +3,7 @@
 ; Stack effect: Push copy of second item
 
 section .text
+extern vm_dispatch
 global op_over
 
 op_over:
@@ -13,4 +14,4 @@ op_over:
     mov rax, [rsi + 8]      ; Load second item (a)
     sub rsi, 8              ; Allocate space
     mov [rsi], rax          ; Push copy of a
-    ret
+    jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

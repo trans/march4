@@ -1,0 +1,3 @@
+-- Test calling a primitive
+
+: add-test 5 7 + ;
