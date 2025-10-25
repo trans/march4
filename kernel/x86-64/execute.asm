@@ -10,6 +10,7 @@ global op_execute
 op_execute:
     ; rsi = data stack pointer (grows downward)
     ; rdi = return stack pointer (grows downward)
+    ; rbx = IP (instruction pointer)
 
     ; Pop address from data stack
     mov rax, [rsi]          ; Load address from TOS
@@ -19,9 +20,13 @@ op_execute:
     test rax, rax
     jz .done                ; If null, just return
 
-    ; Call the word at the address
-    ; The word will manipulate stacks as needed and return to us
-    call rax
+    ; FORTH-style execute: just jump to the address (direct threading)
+    ; The address is a DOCOL wrapper that will:
+    ;  1. Save current IP on return stack
+    ;  2. Set IP to the quotation's cells
+    ;  3. Jump to vm_dispatch
+    ; When the quotation hits EXIT, it will restore IP and continue
+    jmp rax
 
 .done:
     jmp vm_dispatch         ; Return to VM dispatch (FORTH-style)

@@ -1,0 +1,1 @@
+: test-execute ( 42 ) execute ;

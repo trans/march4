@@ -1,0 +1,1 @@
+: test-twice ( 42 ) execute ( 99 ) execute ;

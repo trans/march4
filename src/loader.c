@@ -491,17 +491,17 @@ void* loader_link_code(loader_t* loader, const uint8_t* blob_data, size_t blob_l
     /* Track for cleanup */
     track_buffer(loader, cells);
 
-    /* For BLOB_WORD, create a DOCOL wrapper so the VM can call it as machine code */
-    if (kind == BLOB_WORD) {
+    /* For BLOB_WORD and BLOB_QUOTATION, create a DOCOL wrapper so they can be executed */
+    if (kind == BLOB_WORD || kind == BLOB_QUOTATION) {
         void* wrapper = create_docol_wrapper(loader, (void*)cells);
         if (!wrapper) {
             fprintf(stderr, "Error: Failed to create DOCOL wrapper\n");
             return NULL;
         }
-        DEBUG_LOADER("Created wrapper for user word");
+        DEBUG_LOADER("Created wrapper for %s", kind == BLOB_WORD ? "user word" : "quotation");
         return wrapper;
     }
 
-    /* For quotations, just return the cells directly */
+    /* For other kinds, return cells directly */
     return (void*)cells;
 }
