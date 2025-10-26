@@ -55,6 +55,7 @@ void* primitive_dispatch_table[256] = {
     [PRIM_BRANCH]   = &op_branch,
     [PRIM_0BRANCH]  = &op_0branch,
     [PRIM_EXECUTE]  = &op_execute,
+    [PRIM_I0]       = &op_i0,
 };
 
 /* ============================================================================ */
@@ -127,6 +128,9 @@ void register_primitives(dictionary_t* dict) {
     /* Control flow */
     REG_PRIM("branch", PRIM_BRANCH, op_branch, "->");
     REG_PRIM("0branch", PRIM_0BRANCH, op_0branch, "i64 ->");
+
+    /* Loop control */
+    REG_PRIM("i0", PRIM_I0, op_i0, "-> i64");
 
     /* Quotation execution - polymorphic ptr */
     REG_PRIM("execute", PRIM_EXECUTE, op_execute, "a ->");

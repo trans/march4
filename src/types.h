@@ -74,6 +74,7 @@
 #define PRIM_BRANCH     40   /* branch */
 #define PRIM_0BRANCH    41   /* 0branch */
 #define PRIM_EXECUTE    42   /* execute */
+#define PRIM_I0         43   /* i0 - loop counter */
 
 /* Cell type */
 typedef uint64_t cell_t;

@@ -66,6 +66,9 @@ extern void op_twofromr(void);
 extern void op_branch(void);
 extern void op_0branch(void);
 
+/* Loop control */
+extern void op_i0(void);
+
 /* Quotation execution */
 extern void op_execute(void);
 

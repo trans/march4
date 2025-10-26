@@ -13,6 +13,7 @@
 
 /* Forward declarations */
 static bool compile_if(compiler_t* comp);
+static bool compile_times(compiler_t* comp);
 static bool compile_true(compiler_t* comp);
 static bool compile_false(compiler_t* comp);
 static bool materialize_quotations(compiler_t* comp);
@@ -88,6 +89,11 @@ void compiler_register_primitives(compiler_t* comp) {
     parse_type_sig("-> i64", &sig);
     dict_add(comp->dict, "false", NULL, NULL, 0, &sig, false, true,
              (immediate_handler_t)compile_false);
+
+    /* times: ( count ( i -- ) -- ) */
+    parse_type_sig("->", &sig);
+    dict_add(comp->dict, "times", NULL, NULL, 0, &sig, false, true,
+             (immediate_handler_t)compile_times);
 
     debug_dump_dict_stats(comp->dict);
 }
@@ -474,6 +480,167 @@ static bool materialize_quotations(compiler_t* comp) {
         cell_buffer_free(quot->cells);
         blob_buffer_free(quot->blob);
         free(quot);
+    }
+
+    return true;
+}
+
+/* Immediate word: times - compile counted loop with inlined quotation */
+static bool compile_times(compiler_t* comp) {
+    /* Stack should be: count ( i -- ) times */
+    /* Pop quotation */
+
+    if (comp->quot_stack_depth < 1) {
+        fprintf(stderr, "times requires a quotation: count ( body ) times\n");
+        return false;
+    }
+
+    quotation_t* body_quot = pop_quotation(comp);
+
+    if (!body_quot) {
+        fprintf(stderr, "Internal error: quotation not available for times\n");
+        return false;
+    }
+
+    /* Check that count is on type stack */
+    if (comp->type_stack_depth < 1) {
+        fprintf(stderr, "times requires a count on stack\n");
+        return false;
+    }
+
+    /* Pop count type */
+    pop_type(comp);
+
+    if (comp->verbose) {
+        printf("  TIMES compiling with body=%zu cells (%zu blob bytes)\n",
+               body_quot->cells->count, body_quot->blob->size);
+    }
+
+    /* Look up primitives we need */
+    dict_entry_t* tor_entry = dict_lookup(comp->dict, ">r");
+    dict_entry_t* fromr_entry = dict_lookup(comp->dict, "r>");
+    dict_entry_t* rfetch_entry = dict_lookup(comp->dict, "r@");
+    dict_entry_t* rdrop_entry = dict_lookup(comp->dict, "rdrop");
+    dict_entry_t* sub_entry = dict_lookup(comp->dict, "-");
+    dict_entry_t* zerop_entry = dict_lookup(comp->dict, "0=");
+    dict_entry_t* zbranch_entry = dict_lookup(comp->dict, "0branch");
+    dict_entry_t* branch_entry = dict_lookup(comp->dict, "branch");
+
+    if (!tor_entry || !fromr_entry || !rfetch_entry || !rdrop_entry ||
+        !sub_entry || !zerop_entry || !zbranch_entry || !branch_entry) {
+        fprintf(stderr, "Internal error: loop primitives not registered\n");
+        return false;
+    }
+
+    /* ===== Legacy cell encoding ===== */
+
+    /* Move count to return stack */
+    cell_buffer_append(comp->cells, encode_xt(tor_entry->addr));
+
+    /* Loop start */
+    size_t loop_start_pos = comp->cells->count;
+
+    /* Check if count is zero: r@ 0= */
+    cell_buffer_append(comp->cells, encode_xt(rfetch_entry->addr));
+    cell_buffer_append(comp->cells, encode_xt(zerop_entry->addr));
+
+    /* If zero, branch to done */
+    cell_buffer_append(comp->cells, encode_xt(zbranch_entry->addr));
+    size_t exit_branch_pos = comp->cells->count;
+    cell_buffer_append(comp->cells, encode_lit(0));  /* Placeholder */
+
+    /* Decrement counter: r> 1 - >r */
+    cell_buffer_append(comp->cells, encode_xt(fromr_entry->addr));
+    cell_buffer_append(comp->cells, encode_lit(1));
+    cell_buffer_append(comp->cells, encode_xt(sub_entry->addr));
+    cell_buffer_append(comp->cells, encode_xt(tor_entry->addr));
+
+    /* Push index for quotation: r@ (count is decreasing, so N-1, N-2, ...) */
+    cell_buffer_append(comp->cells, encode_xt(rfetch_entry->addr));
+
+    /* Inline quotation body (minus EXIT) */
+    for (size_t i = 0; i < body_quot->cells->count - 1; i++) {
+        cell_buffer_append(comp->cells, body_quot->cells->cells[i]);
+    }
+
+    /* Branch back to loop start */
+    cell_buffer_append(comp->cells, encode_xt(branch_entry->addr));
+    int64_t loop_offset = (int64_t)(loop_start_pos - comp->cells->count - 1);
+    cell_buffer_append(comp->cells, encode_lit(loop_offset));
+
+    /* Done: calculate exit branch offset */
+    int64_t exit_offset = (int64_t)(comp->cells->count - exit_branch_pos - 1);
+    comp->cells->cells[exit_branch_pos] = encode_lit(exit_offset);
+
+    /* Clean up return stack */
+    cell_buffer_append(comp->cells, encode_xt(rdrop_entry->addr));
+
+    /* ===== CID-based blob encoding ===== */
+
+    /* Move count to return stack */
+    encode_primitive(comp->blob, tor_entry->prim_id);
+
+    /* Loop start marker (we'll need to calculate offset later) */
+    size_t blob_loop_start = comp->blob->size;
+
+    /* Check if count is zero: r@ 0= */
+    encode_primitive(comp->blob, rfetch_entry->prim_id);
+    encode_primitive(comp->blob, zerop_entry->prim_id);
+
+    /* 0branch to exit */
+    encode_primitive(comp->blob, zbranch_entry->prim_id);
+    size_t blob_exit_branch_pos = comp->blob->size;
+
+    /* We need to know the offset in cells, not bytes! */
+    /* Calculate: body cells + decrement(4) + push_index(1) + branch_back(2) */
+    int64_t exit_cells_offset = (int64_t)(body_quot->cells->count - 1 + 7);
+    unsigned char* exit_offset_cid = db_store_literal(comp->db, exit_cells_offset, "i64");
+    encode_cid_ref(comp->blob, BLOB_DATA, exit_offset_cid);
+    free(exit_offset_cid);
+
+    /* Decrement counter: r> 1 - >r */
+    encode_primitive(comp->blob, fromr_entry->prim_id);
+    unsigned char* one_cid = db_store_literal(comp->db, 1, "i64");
+    encode_cid_ref(comp->blob, BLOB_DATA, one_cid);
+    free(one_cid);
+    encode_primitive(comp->blob, sub_entry->prim_id);
+    encode_primitive(comp->blob, tor_entry->prim_id);
+
+    /* Push index: r@ */
+    encode_primitive(comp->blob, rfetch_entry->prim_id);
+
+    /* Inline quotation body */
+    if (comp->verbose) {
+        printf("  TIMES inlining body: %zu blob bytes\n", body_quot->blob->size);
+    }
+    blob_buffer_append_bytes(comp->blob, body_quot->blob->data, body_quot->blob->size);
+
+    /* Branch back to loop start */
+    encode_primitive(comp->blob, branch_entry->prim_id);
+
+    /* Calculate backward offset in cells */
+    /* From after the branch offset LIT back to loop_start */
+    /* We've emitted: r@ 0= 0branch offset r> 1 - >r r@ <body> branch */
+    /* Loop start is at: r@ (after >r) */
+    /* Current position (after branch prim): need to count cells */
+    int64_t back_cells = -(int64_t)(2 + 1 + 1 + 1 + 1 + 1 + (body_quot->cells->count - 1) + 1 + 1);
+    unsigned char* back_offset_cid = db_store_literal(comp->db, back_cells, "i64");
+    encode_cid_ref(comp->blob, BLOB_DATA, back_offset_cid);
+    free(back_offset_cid);
+
+    /* Clean up return stack */
+    encode_primitive(comp->blob, rdrop_entry->prim_id);
+
+    /* Apply quotation output types (quotation consumes its inputs, no net change) */
+    /* The quotation signature is ( i64 -- ), so no change to type stack */
+
+    /* Free quotation */
+    cell_buffer_free(body_quot->cells);
+    blob_buffer_free(body_quot->blob);
+    free(body_quot);
+
+    if (comp->verbose) {
+        printf("  TIMES compiled\n");
     }
 
     return true;
