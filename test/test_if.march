@@ -1,0 +1,2 @@
+: test-if-true 1 ( 111 ) ( 222 ) if ;
+: test-if-false 0 ( 333 ) ( 444 ) if ;

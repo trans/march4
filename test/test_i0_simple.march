@@ -1,0 +1,1 @@
+: test-i0-simple 42 >r i0 r> drop ;
