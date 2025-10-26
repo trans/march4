@@ -32,6 +32,7 @@
 
 /* Fixed primitive ID table (LINKING.md design) */
 /* These IDs are stable and never change - assembly can be updated without breaking compiled code */
+#define PRIM_LIT        0    /* i64 literal (8 bytes follow tag) */
 #define PRIM_ADD        1    /* + */
 #define PRIM_SUB        2    /* - */
 #define PRIM_MUL        3    /* * */
@@ -131,6 +132,7 @@ void blob_buffer_append_bytes(blob_buffer_t* buf, const uint8_t* bytes, size_t l
 /* Blob encoding functions (LINKING.md design) */
 void encode_primitive(blob_buffer_t* buf, uint16_t prim_id);
 void encode_cid_ref(blob_buffer_t* buf, uint16_t kind, const unsigned char* cid);
+void encode_inline_literal(blob_buffer_t* buf, int64_t value);
 
 /* Blob decoding functions */
 const uint8_t* decode_tag_ex(const uint8_t* ptr, bool* is_cid, uint16_t* id_or_kind, const unsigned char** cid);

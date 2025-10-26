@@ -54,4 +54,31 @@ void debug_dump_type_stack(const char* label, void* type_stack, int depth);
 /* Helper to dump dictionary stats */
 void debug_dump_dict_stats(void* dict);
 
+/* ============================================================================ */
+/* Crash Handler - Track context for better segfault debugging */
+/* ============================================================================ */
+
+/* Crash context tracking */
+typedef struct {
+    const char* phase;           /* "init", "register", "compile", "execute" */
+    const char* current_file;    /* Source file being compiled */
+    char current_word[64];       /* Word being defined (fixed buffer) */
+    char current_token[64];      /* Token being processed (fixed buffer) */
+    int type_stack_depth;
+    int quot_stack_depth;
+    int buffer_stack_depth;
+} crash_context_t;
+
+extern crash_context_t crash_context;
+
+/* Install signal handler for SIGSEGV */
+void crash_handler_install(void);
+
+/* Update crash context (call from compiler) */
+void crash_context_set_phase(const char* phase);
+void crash_context_set_file(const char* file);
+void crash_context_set_word(const char* word);
+void crash_context_set_token(const char* token);
+void crash_context_set_stacks(int type_depth, int quot_depth, int buffer_depth);
+
 #endif /* MARCH_DEBUG_H */

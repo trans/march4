@@ -426,15 +426,26 @@ void* loader_link_code(loader_t* loader, const uint8_t* blob_data, size_t blob_l
         }
 
         if (!is_cid) {
-            /* Primitive: look up runtime address by ID */
-            void* prim_addr = loader_get_primitive_addr(loader, id_or_kind);
-            if (!prim_addr) {
-                free(cells);
-                return NULL;
+            /* Check for literal */
+            if (id_or_kind == PRIM_LIT) {
+                /* Read 8-byte little-endian value */
+                int64_t value = 0;
+                for (int i = 0; i < 8; i++) {
+                    value |= ((int64_t)cid[i]) << (i * 8);
+                }
+                DEBUG_LOADER("  Literal: value=%ld", value);
+                cells[count++] = encode_lit(value);
+            } else {
+                /* Regular primitive: look up runtime address by ID */
+                void* prim_addr = loader_get_primitive_addr(loader, id_or_kind);
+                if (!prim_addr) {
+                    free(cells);
+                    return NULL;
+                }
+                cell_t encoded = encode_xt(prim_addr);
+                DEBUG_LOADER("  Primitive #%u -> addr=%p", id_or_kind, prim_addr);
+                cells[count++] = encoded;
             }
-            cell_t encoded = encode_xt(prim_addr);
-            DEBUG_LOADER("  Primitive #%u -> addr=%p", id_or_kind, prim_addr);
-            cells[count++] = encoded;
         } else {
             /* CID reference: recursively link */
             DEBUG_LOADER("  CID reference kind=%u", id_or_kind);

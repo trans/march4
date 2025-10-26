@@ -37,11 +37,24 @@ static void print_usage(const char* prog) {
 }
 
 int main(int argc, char** argv) {
+    fprintf(stderr, "TRACE: main() entry\n");
+    fflush(stderr);
+
     const char* output_db = "march.db";
     const char* run_word = NULL;
     bool verbose = false;
     bool show_stack = false;
     int opt;
+
+    fprintf(stderr, "TRACE: Installing crash handler\n");
+    fflush(stderr);
+
+    /* Install crash handler first */
+    crash_handler_install();
+    crash_context_set_phase("init");
+
+    fprintf(stderr, "TRACE: Crash handler installed\n");
+    fflush(stderr);
 
     /* Initialize debug system from environment */
     debug_init();
@@ -145,14 +158,26 @@ int main(int argc, char** argv) {
 
     comp->verbose = verbose;
 
+    fprintf(stderr, "TRACE: About to register primitives\n");
+    fflush(stderr);
+
     /* Register primitives */
+    crash_context_set_phase("register_primitives");
     compiler_register_primitives(comp);
+
+    fprintf(stderr, "TRACE: Primitives registered\n");
+    fflush(stderr);
 
     if (verbose) {
         printf("Compiling: %s → %s\n", input_file, output_db);
     }
 
+    fprintf(stderr, "TRACE: Starting compilation of %s\n", input_file);
+    fflush(stderr);
+
     /* Compile file */
+    crash_context_set_phase("compile");
+    crash_context_set_file(input_file);
     if (!compiler_compile_file(comp, input_file)) {
         fprintf(stderr, "Compilation failed\n");
         compiler_free(comp);
@@ -167,6 +192,9 @@ int main(int argc, char** argv) {
 
     /* Run word if requested */
     if (run_word) {
+        crash_context_set_phase("execute");
+        crash_context_set_word(run_word);
+
         if (verbose) {
             printf("\nExecuting: %s\n", run_word);
         }

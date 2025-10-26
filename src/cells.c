@@ -207,6 +207,22 @@ void encode_cid_ref(blob_buffer_t* buf, uint16_t kind, const unsigned char* cid)
     blob_buffer_append_bytes(buf, cid, CID_SIZE);
 }
 
+/* Encode inline i64 literal - 2-byte tag + 8-byte value
+ * Tag format: (PRIM_LIT << 1) | 0 = 0x0000
+ * Bit 0 = 0 (primitive type), ID = 0 (special: literal)
+ */
+void encode_inline_literal(blob_buffer_t* buf, int64_t value) {
+    uint16_t tag = (PRIM_LIT << 1) | 0;  /* Tag = 0x0000 */
+    blob_buffer_append_u16(buf, tag);
+
+    /* Append value as little-endian 8 bytes */
+    uint8_t bytes[8];
+    for (int i = 0; i < 8; i++) {
+        bytes[i] = (value >> (i * 8)) & 0xFF;
+    }
+    blob_buffer_append_bytes(buf, bytes, 8);
+}
+
 /* ============================================================================ */
 /* CID-based decoding functions (LINKING.md design) */
 /* ============================================================================ */
@@ -214,9 +230,9 @@ void encode_cid_ref(blob_buffer_t* buf, uint16_t kind, const unsigned char* cid)
 /* Decode tag from blob data
  * Returns: pointer to next position in blob
  * Outputs:
- *   is_cid: true if CID reference, false if primitive
+ *   is_cid: true if CID reference, false if primitive/literal
  *   id_or_kind: primitive ID or blob kind
- *   cid: pointer to CID (if is_cid=true) or NULL
+ *   cid: pointer to CID (if is_cid=true), literal bytes (if PRIM_LIT), or NULL
  */
 const uint8_t* decode_tag_ex(const uint8_t* ptr, bool* is_cid, uint16_t* id_or_kind, const unsigned char** cid) {
     /* Read 2-byte tag (little-endian) */
@@ -231,10 +247,18 @@ const uint8_t* decode_tag_ex(const uint8_t* ptr, bool* is_cid, uint16_t* id_or_k
         *cid = ptr;
         return ptr + CID_SIZE;  /* Skip CID */
     } else {
-        /* Primitive */
+        /* Primitive or literal */
         *is_cid = false;
         *id_or_kind = tag >> 1;  /* Primitive ID */
-        *cid = NULL;
-        return ptr;
+
+        if (*id_or_kind == PRIM_LIT) {
+            /* Literal: point cid to 8-byte value */
+            *cid = ptr;
+            return ptr + 8;  /* Skip 8-byte literal */
+        } else {
+            /* Regular primitive: no data follows */
+            *cid = NULL;
+            return ptr;
+        }
     }
 }

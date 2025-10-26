@@ -37,23 +37,16 @@ Topic: Core execution model, memory architecture, and compiler/runtime
 
 • Each Cell = one machine word (64 bits typical) with low bits used as a tag.
 
-  Low-bit tags:
-      00 = XT (execute word)
-      01 = GO (return)
-      10 = LIT_I62 (next word = 64-bit literal)
-      11 = ?? (tbd)
+    00 = XT  execution token         [address | 00]   Jump to word (address=0 means EXIT)
+    01 = LIT immediate token         [value   | 01]   62-bit signed immediate value
+    10 = LST symbol token            [value   | 10]   62-bit unsigned immediate symbol reference
+    11 = EXT
+      110 = LNT next N literals token   [value   | 110]  Next N tokens are literal numbers (N is 61-bit number)
+      111 = FEXT future extension       [value   | 111]   Extended operations TBD
 
-• In future 11 may be used for for Extended forms (EXT) allow unlimited new instruction kinds:
-      EXT + next word sub-tag (e.g., LIT_REF, LIT_F64, DBG_MARK, CALL_INDIRECT, etc.)
-
-• Dispatch loop pseudocode:
-
-    cell = *IP++;
-    tag  = cell & 0x3;
-    if tag == 0: jmp [cell & ~0x3];         // XT
-    if tag == 1: IP = pop_return();         // EXIT
-    if tag == 2: push(*IP++);               // LIT_I64
-    if tag == 3: handle_EXT(IP);
+• In future 111 may be used for for Extended forms (EXT) allow unlimited new instruction kinds: 
+     EXT + next word sub-tag (e.g., LIT_REF, LIT_F64, DBG_MARK, CALL_INDIRECT, etc.)
+     But we are trying to avoid needing to do so.
 
 • Alignment guarantees (x86-64, AArch64): low 2 bits of pointers are zero due to ≥4-byte alignment, so pointer tagging is safe and portable.
 

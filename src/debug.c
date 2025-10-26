@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <signal.h>
+#include <unistd.h>
 
 /* Global debug flags */
 unsigned int debug_flags = 0;
@@ -126,4 +128,94 @@ void debug_dump_dict_stats(void* dict_ptr) {
 
     fprintf(stderr, "[DEBUG_DICT] Dictionary stats: %d total (%d primitives, %d words, %d immediate)\n",
             total_entries, primitive_count, word_count, immediate_count);
+}
+
+/* ============================================================================ */
+/* Crash Handler */
+/* ============================================================================ */
+
+/* Global crash context */
+crash_context_t crash_context = {
+    .phase = "init",
+    .current_file = NULL,
+    .current_word = "",
+    .current_token = "",
+    .type_stack_depth = 0,
+    .quot_stack_depth = 0,
+    .buffer_stack_depth = 0
+};
+
+/* Signal handler for SIGSEGV */
+static void crash_handler(int sig) {
+    /* Use write() for async-signal safety */
+    const char* msg1 = "\n============================================\n";
+    const char* msg2 = "=== CRASH: Segmentation Fault ===\n";
+    const char* msg3 = "============================================\n";
+    write(2, msg1, strlen(msg1));
+    write(2, msg2, strlen(msg2));
+    write(2, msg3, strlen(msg3));
+
+    /* Use fprintf for detailed output (technically unsafe but works in practice) */
+    fprintf(stderr, "Phase: %s\n", crash_context.phase);
+
+    if (crash_context.current_file) {
+        fprintf(stderr, "File: %s\n", crash_context.current_file);
+    }
+
+    if (crash_context.current_word[0]) {
+        fprintf(stderr, "Word: %s\n", crash_context.current_word);
+    }
+
+    if (crash_context.current_token[0]) {
+        fprintf(stderr, "Token: %s\n", crash_context.current_token);
+    }
+
+    fprintf(stderr, "Type stack depth: %d\n", crash_context.type_stack_depth);
+    fprintf(stderr, "Quotation stack depth: %d\n", crash_context.quot_stack_depth);
+    fprintf(stderr, "Buffer stack depth: %d\n", crash_context.buffer_stack_depth);
+    fprintf(stderr, "In quotation: %s\n",
+            crash_context.buffer_stack_depth > 0 ? "YES" : "NO");
+    fprintf(stderr, "============================================\n");
+    fflush(stderr);
+
+    /* Exit immediately to avoid double-crash */
+    _exit(139);
+}
+
+/* Install crash handler */
+void crash_handler_install(void) {
+    signal(SIGSEGV, crash_handler);
+}
+
+/* Update context functions */
+void crash_context_set_phase(const char* phase) {
+    crash_context.phase = phase;
+}
+
+void crash_context_set_file(const char* file) {
+    crash_context.current_file = file;
+}
+
+void crash_context_set_word(const char* word) {
+    if (word) {
+        strncpy(crash_context.current_word, word, 63);
+        crash_context.current_word[63] = '\0';
+    } else {
+        crash_context.current_word[0] = '\0';
+    }
+}
+
+void crash_context_set_token(const char* token) {
+    if (token) {
+        strncpy(crash_context.current_token, token, 63);
+        crash_context.current_token[63] = '\0';
+    } else {
+        crash_context.current_token[0] = '\0';
+    }
+}
+
+void crash_context_set_stacks(int type_depth, int quot_depth, int buffer_depth) {
+    crash_context.type_stack_depth = type_depth;
+    crash_context.quot_stack_depth = quot_depth;
+    crash_context.buffer_stack_depth = buffer_depth;
 }

@@ -178,6 +178,14 @@ static bool apply_signature(compiler_t* comp, type_sig_t* sig) {
 
 /* Compile a number literal */
 static bool compile_number(compiler_t* comp, int64_t num) {
+    /* Update crash context */
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%ld", num);
+    crash_context_set_token(buf);
+    crash_context_set_stacks(comp->type_stack_depth,
+                            comp->quot_stack_depth,
+                            comp->buffer_stack_depth);
+
     /* Legacy: Emit LIT cell */
     cell_buffer_append(comp->cells, encode_lit(num));
 
@@ -202,16 +210,36 @@ static bool compile_number(compiler_t* comp, int64_t num) {
 
 /* Compile a word reference */
 static bool compile_word(compiler_t* comp, const char* name) {
+    fprintf(stderr, "TRACE: compile_word('%s') entry\n", name);
+    fflush(stderr);
+
+    /* Update crash context */
+    crash_context_set_token(name);
+    crash_context_set_stacks(comp->type_stack_depth,
+                            comp->quot_stack_depth,
+                            comp->buffer_stack_depth);
+
+    fprintf(stderr, "TRACE: Looking up word '%s'\n", name);
+    fflush(stderr);
+
     /* Lookup word (may be immediate, primitive, or user word) */
     dict_entry_t* entry = dict_lookup(comp->dict, name);
+
+    fprintf(stderr, "TRACE: Lookup result: %s\n", entry ? "found" : "not found");
+    fflush(stderr);
 
     if (!entry) {
         fprintf(stderr, "Unknown word: %s\n", name);
         return false;
     }
 
+    fprintf(stderr, "TRACE: is_immediate=%d\n", entry->is_immediate);
+    fflush(stderr);
+
     /* Check if this is an immediate (compile-time) word */
     if (entry->is_immediate) {
+        fprintf(stderr, "TRACE: Calling immediate handler for '%s'\n", name);
+        fflush(stderr);
         if (!entry->handler) {
             fprintf(stderr, "Internal error: immediate word '%s' has no handler\n", name);
             return false;
@@ -220,17 +248,30 @@ static bool compile_word(compiler_t* comp, const char* name) {
         return entry->handler(comp);
     }
 
+    fprintf(stderr, "TRACE: Not immediate, quot_depth=%d buffer_depth=%d\n",
+            comp->quot_stack_depth, comp->buffer_stack_depth);
+    fflush(stderr);
+
     /* Not immediate - materialize any pending quotations first */
-    if (comp->quot_stack_depth > 0) {
+    /* But only if we're not currently inside a quotation being compiled */
+    if (comp->quot_stack_depth > 0 && comp->buffer_stack_depth == 0) {
+        fprintf(stderr, "TRACE: Materializing quotations\n");
+        fflush(stderr);
         if (!materialize_quotations(comp)) {
             return false;
         }
     }
 
+    fprintf(stderr, "TRACE: Doing type-aware lookup for '%s'\n", name);
+    fflush(stderr);
+
     /* Not immediate - do type-aware lookup for overload resolution */
     entry = dict_lookup_typed(comp->dict, name,
                              comp->type_stack,
                              comp->type_stack_depth);
+
+    fprintf(stderr, "TRACE: Type-aware lookup result: %s\n", entry ? "found" : "not found");
+    fflush(stderr);
 
     if (!entry) {
         DEBUG_COMPILER("Failed to find match for word: %s", name);
@@ -277,6 +318,11 @@ static bool compile_word(compiler_t* comp, const char* name) {
 
 /* Start quotation - save current state and begin new compilation */
 static bool compile_lparen(compiler_t* comp) {
+    crash_context_set_token("(");
+    crash_context_set_stacks(comp->type_stack_depth,
+                            comp->quot_stack_depth,
+                            comp->buffer_stack_depth);
+
     if (comp->quot_stack_depth >= MAX_QUOT_DEPTH) {
         fprintf(stderr, "Quotation nesting too deep (max %d)\n", MAX_QUOT_DEPTH);
         return false;
@@ -322,6 +368,11 @@ static bool compile_lparen(compiler_t* comp) {
 
 /* End quotation - finalize and push onto quotation stack */
 static bool compile_rparen(compiler_t* comp) {
+    crash_context_set_token(")");
+    crash_context_set_stacks(comp->type_stack_depth,
+                            comp->quot_stack_depth,
+                            comp->buffer_stack_depth);
+
     if (comp->quot_stack_depth == 0) {
         fprintf(stderr, "Unmatched ')' - no quotation in progress\n");
         return false;
@@ -487,7 +538,8 @@ static bool materialize_quotations(compiler_t* comp) {
 
 /* Immediate word: times - compile counted loop with inlined quotation */
 static bool compile_times(compiler_t* comp) {
-    /* Stack should be: count ( i -- ) times */
+    /* Stack should be: count ( -- ) times */
+    /* Quotation body can access loop counter via i0 word */
     /* Pop quotation */
 
     if (comp->quot_stack_depth < 1) {
@@ -540,9 +592,8 @@ static bool compile_times(compiler_t* comp) {
     /* Loop start */
     size_t loop_start_pos = comp->cells->count;
 
-    /* Check if count is zero: r@ 0= */
+    /* Check if count is zero: r@ */
     cell_buffer_append(comp->cells, encode_xt(rfetch_entry->addr));
-    cell_buffer_append(comp->cells, encode_xt(zerop_entry->addr));
 
     /* If zero, branch to done */
     cell_buffer_append(comp->cells, encode_xt(zbranch_entry->addr));
@@ -555,10 +606,7 @@ static bool compile_times(compiler_t* comp) {
     cell_buffer_append(comp->cells, encode_xt(sub_entry->addr));
     cell_buffer_append(comp->cells, encode_xt(tor_entry->addr));
 
-    /* Push index for quotation: r@ (count is decreasing, so N-1, N-2, ...) */
-    cell_buffer_append(comp->cells, encode_xt(rfetch_entry->addr));
-
-    /* Inline quotation body (minus EXIT) */
+    /* Inline quotation body (minus EXIT) - can access counter via i0 */
     for (size_t i = 0; i < body_quot->cells->count - 1; i++) {
         cell_buffer_append(comp->cells, body_quot->cells->cells[i]);
     }
@@ -580,36 +628,24 @@ static bool compile_times(compiler_t* comp) {
     /* Move count to return stack */
     encode_primitive(comp->blob, tor_entry->prim_id);
 
-    /* Loop start marker (we'll need to calculate offset later) */
-    size_t blob_loop_start = comp->blob->size;
-
-    /* Check if count is zero: r@ 0= */
+    /* Check if count is zero: r@ */
     encode_primitive(comp->blob, rfetch_entry->prim_id);
-    encode_primitive(comp->blob, zerop_entry->prim_id);
 
     /* 0branch to exit */
     encode_primitive(comp->blob, zbranch_entry->prim_id);
-    size_t blob_exit_branch_pos = comp->blob->size;
 
     /* We need to know the offset in cells, not bytes! */
-    /* Calculate: body cells + decrement(4) + push_index(1) + branch_back(2) */
-    int64_t exit_cells_offset = (int64_t)(body_quot->cells->count - 1 + 7);
-    unsigned char* exit_offset_cid = db_store_literal(comp->db, exit_cells_offset, "i64");
-    encode_cid_ref(comp->blob, BLOB_DATA, exit_offset_cid);
-    free(exit_offset_cid);
+    /* Calculate: body cells + decrement(4) + branch_back(2) */
+    int64_t exit_cells_offset = (int64_t)(body_quot->cells->count - 1 + 6);
+    encode_inline_literal(comp->blob, exit_cells_offset);
 
     /* Decrement counter: r> 1 - >r */
     encode_primitive(comp->blob, fromr_entry->prim_id);
-    unsigned char* one_cid = db_store_literal(comp->db, 1, "i64");
-    encode_cid_ref(comp->blob, BLOB_DATA, one_cid);
-    free(one_cid);
+    encode_inline_literal(comp->blob, 1);
     encode_primitive(comp->blob, sub_entry->prim_id);
     encode_primitive(comp->blob, tor_entry->prim_id);
 
-    /* Push index: r@ */
-    encode_primitive(comp->blob, rfetch_entry->prim_id);
-
-    /* Inline quotation body */
+    /* Inline quotation body - can access counter via i0 */
     if (comp->verbose) {
         printf("  TIMES inlining body: %zu blob bytes\n", body_quot->blob->size);
     }
@@ -620,19 +656,18 @@ static bool compile_times(compiler_t* comp) {
 
     /* Calculate backward offset in cells */
     /* From after the branch offset LIT back to loop_start */
-    /* We've emitted: r@ 0= 0branch offset r> 1 - >r r@ <body> branch */
-    /* Loop start is at: r@ (after >r) */
+    /* We've emitted: r@ 0branch offset r> 1 - >r <body> branch */
+    /* Loop start is at: r@ (first check) */
     /* Current position (after branch prim): need to count cells */
-    int64_t back_cells = -(int64_t)(2 + 1 + 1 + 1 + 1 + 1 + (body_quot->cells->count - 1) + 1 + 1);
-    unsigned char* back_offset_cid = db_store_literal(comp->db, back_cells, "i64");
-    encode_cid_ref(comp->blob, BLOB_DATA, back_offset_cid);
-    free(back_offset_cid);
+    int64_t back_cells = -(int64_t)(1 + 1 + 1 + 1 + 1 + 1 + 1 + (body_quot->cells->count - 1) + 1 + 1);
+    encode_inline_literal(comp->blob, back_cells);
 
     /* Clean up return stack */
     encode_primitive(comp->blob, rdrop_entry->prim_id);
 
-    /* Apply quotation output types (quotation consumes its inputs, no net change) */
-    /* The quotation signature is ( i64 -- ), so no change to type stack */
+    /* Apply quotation output types */
+    /* Quotation body can access loop counter via i0, but doesn't take it as input */
+    /* Type stack effect depends on what the quotation body does */
 
     /* Free quotation */
     cell_buffer_free(body_quot->cells);
@@ -727,19 +762,7 @@ static bool compile_if(compiler_t* comp) {
     /* Calculate and emit 0branch offset */
     /* Offset = true branch size + 2 (for BRANCH primitive + its offset) */
     int64_t zbranch_offset_blob = (int64_t)(true_quot->cells->count - 1 + 2);
-    unsigned char* zbranch_offset_cid = db_store_literal(comp->db, zbranch_offset_blob, "i64");
-    if (!zbranch_offset_cid) {
-        fprintf(stderr, "Error: Failed to store 0branch offset literal\n");
-        cell_buffer_free(true_quot->cells);
-        blob_buffer_free(true_quot->blob);
-        free(true_quot);
-        cell_buffer_free(false_quot->cells);
-        blob_buffer_free(false_quot->blob);
-        free(false_quot);
-        return false;
-    }
-    encode_cid_ref(comp->blob, BLOB_DATA, zbranch_offset_cid);
-    free(zbranch_offset_cid);
+    encode_inline_literal(comp->blob, zbranch_offset_blob);
 
     /* Inline true quotation blob data */
     if (comp->verbose) {
@@ -753,19 +776,7 @@ static bool compile_if(compiler_t* comp) {
     /* Calculate and emit branch offset */
     /* Offset = false branch size */
     int64_t branch_offset_blob = (int64_t)(false_quot->cells->count - 1);
-    unsigned char* branch_offset_cid = db_store_literal(comp->db, branch_offset_blob, "i64");
-    if (!branch_offset_cid) {
-        fprintf(stderr, "Error: Failed to store branch offset literal\n");
-        cell_buffer_free(true_quot->cells);
-        blob_buffer_free(true_quot->blob);
-        free(true_quot);
-        cell_buffer_free(false_quot->cells);
-        blob_buffer_free(false_quot->blob);
-        free(false_quot);
-        return false;
-    }
-    encode_cid_ref(comp->blob, BLOB_DATA, branch_offset_cid);
-    free(branch_offset_cid);
+    encode_inline_literal(comp->blob, branch_offset_blob);
 
     /* Inline false quotation blob data */
     if (comp->verbose) {
@@ -917,6 +928,9 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     char* word_name = strdup(name_tok.text);
     token_free(&name_tok);
 
+    /* Track current word in crash context */
+    crash_context_set_word(word_name);
+
     if (comp->verbose) {
         printf("\nCompiling word: %s\n", word_name);
     }
@@ -950,6 +964,10 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     /* Compile tokens until ';' */
     token_t tok;
     while (token_stream_next(stream, &tok)) {
+        fprintf(stderr, "TRACE: In word '%s', token type=%d text='%s'\n",
+                word_name, tok.type, tok.text ? tok.text : "NULL");
+        fflush(stderr);
+
         if (tok.type == TOK_SEMICOLON) {
             token_free(&tok);
             break;
@@ -1103,23 +1121,37 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
         comp->pending_type_sig = NULL;
     }
 
+    /* Clear word context */
+    crash_context_set_word(NULL);
+
     return true;
 }
 
 /* Compile a file */
 bool compiler_compile_file(compiler_t* comp, const char* filename) {
+    fprintf(stderr, "TRACE: compiler_compile_file entry\n");
+    fflush(stderr);
+
     token_stream_t* stream = token_stream_create(filename);
     if (!stream) {
         fprintf(stderr, "Cannot open file: %s\n", filename);
         return false;
     }
 
+    fprintf(stderr, "TRACE: Token stream created\n");
+    fflush(stderr);
+
     if (comp->verbose) {
         printf("Compiling: %s\n", filename);
     }
 
+    DEBUG_COMPILER("Starting token loop");
     token_t tok;
     while (token_stream_next(stream, &tok)) {
+        fprintf(stderr, "TRACE: Token type=%d text='%s'\n", tok.type, tok.text ? tok.text : "NULL");
+        fflush(stderr);
+
+        DEBUG_COMPILER("Processing token type=%d text='%s'", tok.type, tok.text ? tok.text : "NULL");
         bool success = true;
 
         if (tok.type == TOK_DOLLAR) {
@@ -1127,6 +1159,9 @@ bool compiler_compile_file(compiler_t* comp, const char* filename) {
             success = compile_type_sig_decl(comp, stream);
         } else if (tok.type == TOK_COLON) {
             /* Start word definition */
+            fprintf(stderr, "TRACE: Starting word definition\n");
+            fflush(stderr);
+            DEBUG_COMPILER("Calling compile_definition");
             success = compile_definition(comp, stream);
         } else if (tok.type == TOK_NUMBER || tok.type == TOK_WORD) {
             /* Top-level expressions not yet supported */
