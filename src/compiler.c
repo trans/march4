@@ -591,6 +591,17 @@ static bool materialize_quotations(compiler_t* comp) {
         quotation_t* quot = pop_quotation(comp);
         if (!quot) return false;
 
+        /* Compile QUOT_LITERAL with empty type context before materializing */
+        if (quot->kind == QUOT_LITERAL) {
+            if (comp->verbose) {
+                printf("  Materializing QUOT_LITERAL: compiling with empty context\n");
+            }
+            if (!quot_compile_with_context(comp, quot, comp->type_stack, 0)) {
+                fprintf(stderr, "Failed to compile QUOT_LITERAL for materialization\n");
+                return false;
+            }
+        }
+
         /* Build type signature strings: inputs -> outputs */
         char input_sig[128] = "";
         char output_sig[128] = "";
@@ -731,6 +742,14 @@ static bool compile_times(compiler_t* comp) {
 
     /* Pop count type */
     pop_type(comp);
+
+    /* Compile QUOT_LITERAL quotation with current type context (after popping count) */
+    if (body_quot->kind == QUOT_LITERAL) {
+        if (!quot_compile_with_context(comp, body_quot, comp->type_stack, comp->type_stack_depth)) {
+            fprintf(stderr, "Failed to compile body quotation with context\n");
+            return false;
+        }
+    }
 
     if (comp->verbose) {
         printf("  TIMES compiling with body=%zu cells (%zu blob bytes)\n",

@@ -1,0 +1,3 @@
+: test-counted
+  5 ( i0 ) times
+;
