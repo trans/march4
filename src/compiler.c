@@ -14,6 +14,7 @@
 /* Forward declarations */
 static bool compile_if(compiler_t* comp);
 static bool compile_times(compiler_t* comp);
+static bool compile_times_until(compiler_t* comp);
 static bool compile_true(compiler_t* comp);
 static bool compile_false(compiler_t* comp);
 static bool materialize_quotations(compiler_t* comp);
@@ -90,10 +91,15 @@ void compiler_register_primitives(compiler_t* comp) {
     dict_add(comp->dict, "false", NULL, NULL, 0, &sig, false, true,
              (immediate_handler_t)compile_false);
 
-    /* times: ( count ( i -- ) -- ) */
-    parse_type_sig("->", &sig);
+    /* times: ( count ( i -- ) -- ) - counted loop */
+    parse_type_sig("i64 ->", &sig);
     dict_add(comp->dict, "times", NULL, NULL, 0, &sig, false, true,
              (immediate_handler_t)compile_times);
+
+    /* times: ( ( -> bool ) ( -> ) -> ) - until-style loop with quotations */
+    parse_type_sig("->", &sig);
+    dict_add(comp->dict, "times", NULL, NULL, 0, &sig, false, true,
+             (immediate_handler_t)compile_times_until);
 
     debug_dump_dict_stats(comp->dict);
 }
@@ -233,28 +239,16 @@ static bool compile_word(compiler_t* comp, const char* name) {
         return false;
     }
 
-    fprintf(stderr, "TRACE: is_immediate=%d\n", entry->is_immediate);
+    /* Check if immediate */
+    bool is_immediate = entry->is_immediate;
+
+    fprintf(stderr, "TRACE: is_immediate=%d, quot_depth=%d buffer_depth=%d\n",
+            is_immediate, comp->quot_stack_depth, comp->buffer_stack_depth);
     fflush(stderr);
 
-    /* Check if this is an immediate (compile-time) word */
-    if (entry->is_immediate) {
-        fprintf(stderr, "TRACE: Calling immediate handler for '%s'\n", name);
-        fflush(stderr);
-        if (!entry->handler) {
-            fprintf(stderr, "Internal error: immediate word '%s' has no handler\n", name);
-            return false;
-        }
-        /* Call the immediate handler */
-        return entry->handler(comp);
-    }
-
-    fprintf(stderr, "TRACE: Not immediate, quot_depth=%d buffer_depth=%d\n",
-            comp->quot_stack_depth, comp->buffer_stack_depth);
-    fflush(stderr);
-
-    /* Not immediate - materialize any pending quotations first */
-    /* But only if we're not currently inside a quotation being compiled */
-    if (comp->quot_stack_depth > 0 && comp->buffer_stack_depth == 0) {
+    /* Materialize any pending quotations ONLY for non-immediate words */
+    /* Immediate words (like 'times', 'if') consume quotations directly */
+    if (!is_immediate && comp->quot_stack_depth > 0 && comp->buffer_stack_depth == 0) {
         fprintf(stderr, "TRACE: Materializing quotations\n");
         fflush(stderr);
         if (!materialize_quotations(comp)) {
@@ -265,7 +259,7 @@ static bool compile_word(compiler_t* comp, const char* name) {
     fprintf(stderr, "TRACE: Doing type-aware lookup for '%s'\n", name);
     fflush(stderr);
 
-    /* Not immediate - do type-aware lookup for overload resolution */
+    /* Do type-aware lookup for overload resolution (works for both immediate and regular) */
     entry = dict_lookup_typed(comp->dict, name,
                              comp->type_stack,
                              comp->type_stack_depth);
@@ -278,6 +272,17 @@ static bool compile_word(compiler_t* comp, const char* name) {
         debug_dump_type_stack("Type stack at failure", comp->type_stack, comp->type_stack_depth);
         fprintf(stderr, "Type error: no matching overload for word: %s\n", name);
         return false;
+    }
+
+    /* If immediate word, call its handler (after type-aware selection!) */
+    if (entry->is_immediate) {
+        fprintf(stderr, "TRACE: Calling immediate handler for '%s'\n", name);
+        fflush(stderr);
+        if (!entry->handler) {
+            fprintf(stderr, "Internal error: immediate word '%s' has no handler\n", name);
+            return false;
+        }
+        return entry->handler(comp);
     }
 
     /* Apply type signature */
@@ -356,11 +361,12 @@ static bool compile_lparen(compiler_t* comp) {
     comp->blob_stack[comp->blob_stack_depth++] = comp->blob;
     comp->blob = quot->blob;
 
-    /* Reset type stack for quotation body */
-    comp->type_stack_depth = 0;
+    /* NOTE: For lexical quotations, we keep the parent type stack.
+     * This allows type-aware lookup of polymorphic operations inside the quotation.
+     * The quotation's inputs are already captured above. */
 
     if (comp->verbose) {
-        printf("  ( start quotation\n");
+        printf("  ( start quotation (inherited stack depth=%d)\n", comp->type_stack_depth);
     }
 
     return true;
@@ -676,6 +682,99 @@ static bool compile_times(compiler_t* comp) {
 
     if (comp->verbose) {
         printf("  TIMES compiled\n");
+    }
+
+    return true;
+}
+
+/* Immediate word: times (quotation-based) - compile until-style loop */
+static bool compile_times_until(compiler_t* comp) {
+    /* Stack should be: ( condition ) ( body ) times */
+    /* Execute body, then condition; repeat until condition returns true */
+
+    if (comp->quot_stack_depth < 2) {
+        fprintf(stderr, "times requires two quotations: ( condition ) ( body ) times\n");
+        return false;
+    }
+
+    quotation_t* body_quot = pop_quotation(comp);
+    quotation_t* cond_quot = pop_quotation(comp);
+
+    if (!body_quot || !cond_quot) {
+        fprintf(stderr, "Internal error: quotations not available for times\n");
+        return false;
+    }
+
+    if (comp->verbose) {
+        printf("  TIMES-UNTIL compiling with cond=%zu cells, body=%zu cells\n",
+               cond_quot->cells->count, body_quot->cells->count);
+    }
+
+    /* Look up branch primitives */
+    dict_entry_t* zbranch_entry = dict_lookup(comp->dict, "0branch");
+    dict_entry_t* branch_entry = dict_lookup(comp->dict, "branch");
+
+    if (!zbranch_entry || !branch_entry) {
+        fprintf(stderr, "Internal error: branch primitives not registered\n");
+        return false;
+    }
+
+    /* ===== Legacy cell encoding ===== */
+    /* Loop start */
+    size_t loop_start_pos = comp->cells->count;
+
+    /* Inline body quotation (minus EXIT) */
+    for (size_t i = 0; i < body_quot->cells->count - 1; i++) {
+        cell_buffer_append(comp->cells, body_quot->cells->cells[i]);
+    }
+
+    /* Inline condition quotation (minus EXIT) */
+    for (size_t i = 0; i < cond_quot->cells->count - 1; i++) {
+        cell_buffer_append(comp->cells, cond_quot->cells->cells[i]);
+    }
+
+    /* 0branch back to loop start if condition is false (0) */
+    cell_buffer_append(comp->cells, encode_xt(zbranch_entry->addr));
+    int64_t loop_offset = (int64_t)(loop_start_pos - comp->cells->count - 1);
+    cell_buffer_append(comp->cells, encode_lit(loop_offset));
+
+    /* ===== CID-based blob encoding ===== */
+    /* Loop start marker */
+    size_t blob_loop_start = comp->blob->size;
+
+    /* Inline body quotation */
+    if (comp->verbose) {
+        printf("  TIMES-UNTIL inlining body: %zu blob bytes\n", body_quot->blob->size);
+    }
+    blob_buffer_append_bytes(comp->blob, body_quot->blob->data, body_quot->blob->size);
+
+    /* Inline condition quotation */
+    if (comp->verbose) {
+        printf("  TIMES-UNTIL inlining condition: %zu blob bytes\n", cond_quot->blob->size);
+    }
+    blob_buffer_append_bytes(comp->blob, cond_quot->blob->data, cond_quot->blob->size);
+
+    /* 0branch back to loop start if condition is false */
+    encode_primitive(comp->blob, zbranch_entry->prim_id);
+
+    /* Calculate backward offset in cells */
+    /* From after the branch offset back to loop_start */
+    /* We've emitted: <body> <cond> 0branch */
+    int64_t back_cells = -(int64_t)((body_quot->cells->count - 1) +
+                                    (cond_quot->cells->count - 1) +
+                                    1 + 1);  /* 0branch prim + offset */
+    encode_inline_literal(comp->blob, back_cells);
+
+    /* Free quotations */
+    cell_buffer_free(body_quot->cells);
+    blob_buffer_free(body_quot->blob);
+    free(body_quot);
+    cell_buffer_free(cond_quot->cells);
+    blob_buffer_free(cond_quot->blob);
+    free(cond_quot);
+
+    if (comp->verbose) {
+        printf("  TIMES-UNTIL compiled\n");
     }
 
     return true;

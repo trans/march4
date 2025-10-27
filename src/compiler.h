@@ -17,10 +17,26 @@
 /* Maximum pending quotation references in a single word */
 #define MAX_QUOT_REFS 64
 
+/* Quotation kind */
+typedef enum {
+    QUOT_LITERAL,  /* Lexical - uncompiled tokens, compile at use site */
+    QUOT_TYPED     /* Typed - compiled with concrete types */
+} quot_kind_t;
+
 /* Quotation (compile-time only) */
 typedef struct {
+    quot_kind_t kind;              /* Literal vs Typed */
+
+    /* For QUOT_TYPED: compiled form */
     cell_buffer_t* cells;          /* Legacy: runtime cells */
     blob_buffer_t* blob;           /* CID-based: blob encoding */
+
+    /* For QUOT_LITERAL: token storage */
+    token_t* tokens;               /* Array of captured tokens */
+    int token_count;
+    int token_capacity;
+
+    /* Type information */
     type_id_t inputs[MAX_TYPE_STACK];
     int input_count;
     type_id_t outputs[MAX_TYPE_STACK];

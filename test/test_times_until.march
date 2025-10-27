@@ -1,0 +1,7 @@
+: test-until
+  5
+  ( dup 0= )
+  ( dup 1 - )
+  times
+  drop
+;
