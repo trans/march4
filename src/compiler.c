@@ -13,6 +13,7 @@
 
 /* Forward declarations */
 static bool compile_if(compiler_t* comp);
+static bool compile_times_dispatch(compiler_t* comp);
 static bool compile_times(compiler_t* comp);
 static bool compile_times_until(compiler_t* comp);
 static bool compile_true(compiler_t* comp);
@@ -91,15 +92,12 @@ void compiler_register_primitives(compiler_t* comp) {
     dict_add(comp->dict, "false", NULL, NULL, 0, &sig, false, true,
              (immediate_handler_t)compile_false);
 
-    /* times: ( count ( i -- ) -- ) - counted loop */
+    /* times: Polymorphic - dispatches based on quotation stack depth
+     *   1 quotation:  count ( body ) times - counted loop
+     *   2 quotations: ( cond ) ( body ) times - until-style loop */
     parse_type_sig("i64 ->", &sig);
     dict_add(comp->dict, "times", NULL, NULL, 0, &sig, false, true,
-             (immediate_handler_t)compile_times);
-
-    /* times: ( ( -> bool ) ( -> ) -> ) - until-style loop with quotations */
-    parse_type_sig("->", &sig);
-    dict_add(comp->dict, "times", NULL, NULL, 0, &sig, false, true,
-             (immediate_handler_t)compile_times_until);
+             (immediate_handler_t)compile_times_dispatch);
 
     debug_dump_dict_stats(comp->dict);
 }
@@ -321,6 +319,139 @@ static bool compile_word(compiler_t* comp, const char* name) {
     return true;
 }
 
+/* Append token to quotation's token array (for QUOT_LITERAL) */
+static bool quot_append_token(quotation_t* quot, const token_t* tok) {
+    /* Grow array if needed */
+    if (quot->token_count >= quot->token_capacity) {
+        int new_capacity = quot->token_capacity * 2;
+        token_t* new_tokens = realloc(quot->tokens, sizeof(token_t) * new_capacity);
+        if (!new_tokens) {
+            fprintf(stderr, "Failed to grow quotation token array\n");
+            return false;
+        }
+        quot->tokens = new_tokens;
+        quot->token_capacity = new_capacity;
+    }
+
+    /* Deep copy the token */
+    quot->tokens[quot->token_count] = *tok;
+    if (tok->text) {
+        quot->tokens[quot->token_count].text = strdup(tok->text);
+        if (!quot->tokens[quot->token_count].text) {
+            fprintf(stderr, "Failed to copy token text\n");
+            return false;
+        }
+    }
+    quot->token_count++;
+
+    return true;
+}
+
+/* Compile QUOT_LITERAL with provided type context
+ * This takes saved tokens and compiles them using the type stack
+ * from the immediate word that consumes the quotation */
+static bool quot_compile_with_context(
+    compiler_t* comp,
+    quotation_t* quot,
+    type_id_t* type_stack,
+    int type_stack_depth)
+{
+    if (quot->kind != QUOT_LITERAL) {
+        fprintf(stderr, "quot_compile_with_context: quotation is not QUOT_LITERAL\n");
+        return false;
+    }
+
+    if (comp->verbose) {
+        printf("  Compiling QUOT_LITERAL with context: %d tokens, stack depth=%d\n",
+               quot->token_count, type_stack_depth);
+    }
+
+    /* Create compilation buffers */
+    quot->cells = cell_buffer_create();
+    quot->blob = blob_buffer_create();
+    if (!quot->cells || !quot->blob) {
+        if (quot->cells) cell_buffer_free(quot->cells);
+        if (quot->blob) blob_buffer_free(quot->blob);
+        return false;
+    }
+
+    /* Save compiler state */
+    cell_buffer_t* saved_cells = comp->cells;
+    blob_buffer_t* saved_blob = comp->blob;
+    int saved_type_depth = comp->type_stack_depth;
+    type_id_t saved_type_stack[MAX_TYPE_STACK];
+    for (int i = 0; i < saved_type_depth; i++) {
+        saved_type_stack[i] = comp->type_stack[i];
+    }
+
+    /* Set up quotation compilation context */
+    comp->cells = quot->cells;
+    comp->blob = quot->blob;
+    comp->type_stack_depth = type_stack_depth;
+    for (int i = 0; i < type_stack_depth; i++) {
+        comp->type_stack[i] = type_stack[i];
+    }
+
+    /* Compile each token */
+    bool success = true;
+    for (int i = 0; i < quot->token_count && success; i++) {
+        token_t* tok = &quot->tokens[i];
+
+        if (comp->verbose) {
+            printf("    compiling token %d: type=%d text='%s'\n",
+                   i, tok->type, tok->text ? tok->text : "NULL");
+        }
+
+        if (tok->type == TOK_NUMBER) {
+            success = compile_number(comp, tok->number);
+        } else if (tok->type == TOK_WORD) {
+            success = compile_word(comp, tok->text);
+        } else if (tok->type == TOK_LPAREN || tok->type == TOK_RPAREN) {
+            fprintf(stderr, "Nested quotations in QUOT_LITERAL not yet supported\n");
+            success = false;
+        } else {
+            fprintf(stderr, "Unexpected token type %d in quotation\n", tok->type);
+            success = false;
+        }
+    }
+
+    if (success) {
+        /* Emit EXIT */
+        cell_buffer_append(quot->cells, encode_exit());
+
+        /* Capture output types */
+        quot->output_count = comp->type_stack_depth;
+        for (int i = 0; i < comp->type_stack_depth; i++) {
+            quot->outputs[i] = comp->type_stack[i];
+        }
+
+        /* Mark as compiled (upgrade to QUOT_TYPED) */
+        quot->kind = QUOT_TYPED;
+
+        if (comp->verbose) {
+            printf("  Compiled quotation: ");
+            for (int i = 0; i < quot->input_count; i++) {
+                printf("%d ", quot->inputs[i]);
+            }
+            printf("-> ");
+            for (int i = 0; i < quot->output_count; i++) {
+                printf("%d ", quot->outputs[i]);
+            }
+            printf("(%zu cells, %zu blob bytes)\n", quot->cells->count, quot->blob->size);
+        }
+    }
+
+    /* Restore compiler state */
+    comp->cells = saved_cells;
+    comp->blob = saved_blob;
+    comp->type_stack_depth = saved_type_depth;
+    for (int i = 0; i < saved_type_depth; i++) {
+        comp->type_stack[i] = saved_type_stack[i];
+    }
+
+    return success;
+}
+
 /* Start quotation - save current state and begin new compilation */
 static bool compile_lparen(compiler_t* comp) {
     crash_context_set_token("(");
@@ -333,18 +464,23 @@ static bool compile_lparen(compiler_t* comp) {
         return false;
     }
 
-    /* Create new quotation */
+    /* Create new quotation as QUOT_LITERAL (lexical quotation) */
     quotation_t* quot = malloc(sizeof(quotation_t));
     if (!quot) return false;
 
-    quot->cells = cell_buffer_create();
-    quot->blob = blob_buffer_create();
-    if (!quot->cells || !quot->blob) {
-        if (quot->cells) cell_buffer_free(quot->cells);
-        if (quot->blob) blob_buffer_free(quot->blob);
+    /* Initialize as QUOT_LITERAL - stores tokens, compiles at use site */
+    quot->kind = QUOT_LITERAL;
+    quot->token_capacity = 16;  /* Initial capacity */
+    quot->token_count = 0;
+    quot->tokens = malloc(sizeof(token_t) * quot->token_capacity);
+    if (!quot->tokens) {
         free(quot);
         return false;
     }
+
+    /* No cells/blob buffers for QUOT_LITERAL - compiled later at use site */
+    quot->cells = NULL;
+    quot->blob = NULL;
 
     /* Capture current type stack as quotation inputs */
     quot->input_count = comp->type_stack_depth;
@@ -352,21 +488,18 @@ static bool compile_lparen(compiler_t* comp) {
         quot->inputs[i] = comp->type_stack[i];
     }
 
+    /* Output types unknown until compilation at use site */
+    quot->output_count = 0;
+
     /* Push quotation onto stack */
     comp->quot_stack[comp->quot_stack_depth++] = quot;
 
-    /* Save current buffers and switch to quotation buffers */
-    comp->buffer_stack[comp->buffer_stack_depth++] = comp->cells;
-    comp->cells = quot->cells;
-    comp->blob_stack[comp->blob_stack_depth++] = comp->blob;
-    comp->blob = quot->blob;
-
-    /* NOTE: For lexical quotations, we keep the parent type stack.
-     * This allows type-aware lookup of polymorphic operations inside the quotation.
-     * The quotation's inputs are already captured above. */
+    /* Increment buffer stack depth to signal we're inside a quotation,
+     * but don't switch buffers - tokens will be captured instead */
+    comp->buffer_stack_depth++;
 
     if (comp->verbose) {
-        printf("  ( start quotation (inherited stack depth=%d)\n", comp->type_stack_depth);
+        printf("  ( start QUOT_LITERAL (capture tokens, depth=%d)\n", comp->buffer_stack_depth);
     }
 
     return true;
@@ -392,35 +525,51 @@ static bool compile_rparen(compiler_t* comp) {
     /* Get current quotation */
     quotation_t* quot = comp->quot_stack[comp->quot_stack_depth - 1];
 
-    /* Emit EXIT */
-    cell_buffer_append(quot->cells, encode_exit());
+    if (quot->kind == QUOT_LITERAL) {
+        /* QUOT_LITERAL: tokens are already captured, just finalize */
+        comp->buffer_stack_depth--;
 
-    /* Capture output types */
-    quot->output_count = comp->type_stack_depth;
-    for (int i = 0; i < comp->type_stack_depth; i++) {
-        quot->outputs[i] = comp->type_stack[i];
-    }
-
-    /* Restore parent buffers */
-    comp->cells = comp->buffer_stack[--comp->buffer_stack_depth];
-    comp->blob = comp->blob_stack[--comp->blob_stack_depth];
-
-    /* Restore type stack (quotation inputs + outputs become new stack) */
-    comp->type_stack_depth = quot->input_count;
-    for (int i = 0; i < quot->input_count; i++) {
-        comp->type_stack[i] = quot->inputs[i];
-    }
-
-    if (comp->verbose) {
-        printf("  ) end quotation: ");
+        /* Restore type stack to pre-quotation state */
+        comp->type_stack_depth = quot->input_count;
         for (int i = 0; i < quot->input_count; i++) {
-            printf("%d ", quot->inputs[i]);
+            comp->type_stack[i] = quot->inputs[i];
         }
-        printf("-> ");
-        for (int i = 0; i < quot->output_count; i++) {
-            printf("%d ", quot->outputs[i]);
+
+        if (comp->verbose) {
+            printf("  ) end QUOT_LITERAL: %d tokens captured\n", quot->token_count);
         }
-        printf(" (%zu cells, %zu blob bytes)\n", quot->cells->count, quot->blob->size);
+    } else {
+        /* QUOT_TYPED: compile immediately (future feature) */
+        /* Emit EXIT */
+        cell_buffer_append(quot->cells, encode_exit());
+
+        /* Capture output types */
+        quot->output_count = comp->type_stack_depth;
+        for (int i = 0; i < comp->type_stack_depth; i++) {
+            quot->outputs[i] = comp->type_stack[i];
+        }
+
+        /* Restore parent buffers */
+        comp->cells = comp->buffer_stack[--comp->buffer_stack_depth];
+        comp->blob = comp->blob_stack[--comp->blob_stack_depth];
+
+        /* Restore type stack (quotation inputs + outputs become new stack) */
+        comp->type_stack_depth = quot->input_count;
+        for (int i = 0; i < quot->input_count; i++) {
+            comp->type_stack[i] = quot->inputs[i];
+        }
+
+        if (comp->verbose) {
+            printf("  ) end QUOT_TYPED: ");
+            for (int i = 0; i < quot->input_count; i++) {
+                printf("%d ", quot->inputs[i]);
+            }
+            printf("-> ");
+            for (int i = 0; i < quot->output_count; i++) {
+                printf("%d ", quot->outputs[i]);
+            }
+            printf(" (%zu cells, %zu blob bytes)\n", quot->cells->count, quot->blob->size);
+        }
     }
 
     /* Note: quotation stays on quot_stack for immediate word to consume */
@@ -540,6 +689,20 @@ static bool materialize_quotations(compiler_t* comp) {
     }
 
     return true;
+}
+
+/* Dispatch times based on quotation stack depth */
+static bool compile_times_dispatch(compiler_t* comp) {
+    if (comp->quot_stack_depth >= 2) {
+        /* Two quotations: until-style loop */
+        return compile_times_until(comp);
+    } else if (comp->quot_stack_depth >= 1) {
+        /* One quotation: counted loop */
+        return compile_times(comp);
+    } else {
+        fprintf(stderr, "times requires at least one quotation\n");
+        return false;
+    }
 }
 
 /* Immediate word: times - compile counted loop with inlined quotation */
@@ -705,6 +868,21 @@ static bool compile_times_until(compiler_t* comp) {
         return false;
     }
 
+    /* Compile QUOT_LITERAL quotations with current type context */
+    if (cond_quot->kind == QUOT_LITERAL) {
+        if (!quot_compile_with_context(comp, cond_quot, comp->type_stack, comp->type_stack_depth)) {
+            fprintf(stderr, "Failed to compile condition quotation with context\n");
+            return false;
+        }
+    }
+
+    if (body_quot->kind == QUOT_LITERAL) {
+        if (!quot_compile_with_context(comp, body_quot, comp->type_stack, comp->type_stack_depth)) {
+            fprintf(stderr, "Failed to compile body quotation with context\n");
+            return false;
+        }
+    }
+
     if (comp->verbose) {
         printf("  TIMES-UNTIL compiling with cond=%zu cells, body=%zu cells\n",
                cond_quot->cells->count, body_quot->cells->count);
@@ -806,6 +984,21 @@ static bool compile_if(compiler_t* comp) {
 
     /* Pop flag type */
     pop_type(comp);
+
+    /* Compile QUOT_LITERAL quotations with current type context (after popping flag) */
+    if (true_quot->kind == QUOT_LITERAL) {
+        if (!quot_compile_with_context(comp, true_quot, comp->type_stack, comp->type_stack_depth)) {
+            fprintf(stderr, "Failed to compile true quotation with context\n");
+            return false;
+        }
+    }
+
+    if (false_quot->kind == QUOT_LITERAL) {
+        if (!quot_compile_with_context(comp, false_quot, comp->type_stack, comp->type_stack_depth)) {
+            fprintf(stderr, "Failed to compile false quotation with context\n");
+            return false;
+        }
+    }
 
     if (comp->verbose) {
         printf("  IF compiling with true=%zu cells (%zu blob bytes), false=%zu cells (%zu blob bytes)\n",
@@ -1094,16 +1287,30 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
 
         bool success = false;
 
-        if (tok.type == TOK_NUMBER) {
-            success = compile_number(comp, tok.number);
-        } else if (tok.type == TOK_WORD) {
-            success = compile_word(comp, tok.text);
-        } else if (tok.type == TOK_LPAREN) {
-            success = compile_lparen(comp);
-        } else if (tok.type == TOK_RPAREN) {
-            success = compile_rparen(comp);
+        /* If inside a quotation, capture tokens instead of compiling */
+        if (comp->buffer_stack_depth > 0 &&
+            tok.type != TOK_LPAREN && tok.type != TOK_RPAREN) {
+            /* Append token to current quotation */
+            quotation_t* quot = comp->quot_stack[comp->quot_stack_depth - 1];
+            success = quot_append_token(quot, &tok);
+
+            if (comp->verbose && success) {
+                printf("    captured token: type=%d text='%s'\n",
+                       tok.type, tok.text ? tok.text : "NULL");
+            }
         } else {
-            fprintf(stderr, "Unexpected token in definition: %s\n", tok.text);
+            /* Normal compilation or quotation delimiters */
+            if (tok.type == TOK_NUMBER) {
+                success = compile_number(comp, tok.number);
+            } else if (tok.type == TOK_WORD) {
+                success = compile_word(comp, tok.text);
+            } else if (tok.type == TOK_LPAREN) {
+                success = compile_lparen(comp);
+            } else if (tok.type == TOK_RPAREN) {
+                success = compile_rparen(comp);
+            } else {
+                fprintf(stderr, "Unexpected token in definition: %s\n", tok.text);
+            }
         }
 
         token_free(&tok);
