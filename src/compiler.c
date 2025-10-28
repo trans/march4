@@ -319,6 +319,21 @@ static bool compile_word(compiler_t* comp, const char* name) {
     return true;
 }
 
+/* Free quotation tokens and their strings (for QUOT_LITERAL) */
+static void quot_free_tokens(quotation_t* quot) {
+    if (quot->tokens) {
+        for (int i = 0; i < quot->token_count; i++) {
+            if (quot->tokens[i].text) {
+                free(quot->tokens[i].text);
+            }
+        }
+        free(quot->tokens);
+        quot->tokens = NULL;
+        quot->token_count = 0;
+        quot->token_capacity = 0;
+    }
+}
+
 /* Append token to quotation's token array (for QUOT_LITERAL) */
 static bool quot_append_token(quotation_t* quot, const token_t* tok) {
     /* Grow array if needed */
@@ -406,9 +421,10 @@ static bool quot_compile_with_context(
             success = compile_number(comp, tok->number);
         } else if (tok->type == TOK_WORD) {
             success = compile_word(comp, tok->text);
-        } else if (tok->type == TOK_LPAREN || tok->type == TOK_RPAREN) {
-            fprintf(stderr, "Nested quotations in QUOT_LITERAL not yet supported\n");
-            success = false;
+        } else if (tok->type == TOK_LPAREN) {
+            success = compile_lparen(comp);
+        } else if (tok->type == TOK_RPAREN) {
+            success = compile_rparen(comp);
         } else {
             fprintf(stderr, "Unexpected token type %d in quotation\n", tok->type);
             success = false;
@@ -645,6 +661,7 @@ static bool materialize_quotations(compiler_t* comp) {
             fprintf(stderr, "Failed to store quotation type signature\n");
             cell_buffer_free(quot->cells);
             blob_buffer_free(quot->blob);
+            quot_free_tokens(quot);
             free(quot);
             return false;
         }
@@ -665,6 +682,7 @@ static bool materialize_quotations(compiler_t* comp) {
             fprintf(stderr, "Failed to store quotation blob\n");
             cell_buffer_free(quot->cells);
             blob_buffer_free(quot->blob);
+            quot_free_tokens(quot);
             free(quot);
             return false;
         }
@@ -675,6 +693,7 @@ static bool materialize_quotations(compiler_t* comp) {
             free(cid);
             cell_buffer_free(quot->cells);
             blob_buffer_free(quot->blob);
+            quot_free_tokens(quot);
             free(quot);
             return false;
         }
@@ -696,6 +715,7 @@ static bool materialize_quotations(compiler_t* comp) {
         /* Free quotation buffers */
         cell_buffer_free(quot->cells);
         blob_buffer_free(quot->blob);
+        quot_free_tokens(quot);
         free(quot);
     }
 
@@ -860,6 +880,7 @@ static bool compile_times(compiler_t* comp) {
     /* Free quotation */
     cell_buffer_free(body_quot->cells);
     blob_buffer_free(body_quot->blob);
+    quot_free_tokens(body_quot);
     free(body_quot);
 
     if (comp->verbose) {
@@ -965,9 +986,11 @@ static bool compile_times_until(compiler_t* comp) {
     /* Free quotations */
     cell_buffer_free(body_quot->cells);
     blob_buffer_free(body_quot->blob);
+    quot_free_tokens(body_quot);
     free(body_quot);
     cell_buffer_free(cond_quot->cells);
     blob_buffer_free(cond_quot->blob);
+    quot_free_tokens(cond_quot);
     free(cond_quot);
 
     if (comp->verbose) {
@@ -1104,9 +1127,11 @@ static bool compile_if(compiler_t* comp) {
     /* Free quotations */
     cell_buffer_free(true_quot->cells);
     blob_buffer_free(true_quot->blob);
+    quot_free_tokens(true_quot);
     free(true_quot);
     cell_buffer_free(false_quot->cells);
     blob_buffer_free(false_quot->blob);
+    quot_free_tokens(false_quot);
     free(false_quot);
 
     if (comp->verbose) {
