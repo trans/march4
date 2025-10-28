@@ -1,0 +1,4 @@
+: test-escape
+  "She said \"hello\" to me"
+  "path\\to\\file"
+;

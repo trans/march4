@@ -86,6 +86,74 @@ static void skip_whitespace(token_stream_t* stream) {
 }
 
 /* Read a word token */
+/* Read string literal: "..." with escape sequences */
+static bool read_string(token_stream_t* stream, token_t* token) {
+    char buffer[1024];  /* Larger buffer for strings */
+    int pos = 0;
+    int c;
+
+    token->line = stream->line;
+    token->column = stream->column;
+
+    /* Skip opening " */
+    c = fgetc(stream->file);
+    if (c != '"') {
+        fprintf(stderr, "Internal error: read_string called without opening quote\n");
+        return false;
+    }
+    stream->column++;
+
+    /* Read until closing " followed by whitespace */
+    while ((c = fgetc(stream->file)) != EOF) {
+        stream->column++;
+
+        if (c == '\\') {
+            /* Escape sequence */
+            int next = fgetc(stream->file);
+            if (next == EOF) {
+                fprintf(stderr, "Line %d: Unexpected EOF after backslash in string\n", stream->line);
+                return false;
+            }
+            stream->column++;
+
+            if (next == '"') {
+                /* Escaped quote */
+                if (pos < 1023) buffer[pos++] = '"';
+            } else if (next == '\\') {
+                /* Escaped backslash */
+                if (pos < 1023) buffer[pos++] = '\\';
+            } else {
+                /* Unknown escape - keep both characters */
+                if (pos < 1023) buffer[pos++] = '\\';
+                if (pos < 1023) buffer[pos++] = next;
+            }
+        } else if (c == '"') {
+            /* Potential closing quote - check for whitespace after */
+            int next = fgetc(stream->file);
+            if (next == EOF || isspace(next)) {
+                /* Valid string end */
+                if (next != EOF) {
+                    ungetc(next, stream->file);
+                }
+                buffer[pos] = '\0';
+                token->type = TOK_STRING;
+                token->text = strdup(buffer);
+                return true;
+            } else {
+                /* Quote not followed by whitespace - include it */
+                if (pos < 1023) buffer[pos++] = '"';
+                ungetc(next, stream->file);
+            }
+        } else {
+            /* Regular character */
+            if (pos < 1023) buffer[pos++] = c;
+        }
+    }
+
+    fprintf(stderr, "Line %d: Unterminated string literal\n", stream->line);
+    return false;
+}
+
 static bool read_word(token_stream_t* stream, token_t* token) {
     char buffer[256];
     int pos = 0;
@@ -93,6 +161,14 @@ static bool read_word(token_stream_t* stream, token_t* token) {
 
     token->line = stream->line;
     token->column = stream->column;
+
+    /* Check for string literal */
+    c = fgetc(stream->file);
+    if (c == '"') {
+        ungetc(c, stream->file);
+        return read_string(stream, token);
+    }
+    ungetc(c, stream->file);
 
     while ((c = fgetc(stream->file)) != EOF && !isspace(c)) {
         if (pos < 255) {

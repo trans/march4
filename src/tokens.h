@@ -16,6 +16,7 @@ typedef enum {
     TOK_EOF,
     TOK_NUMBER,      /* Integer literal */
     TOK_WORD,        /* Word/identifier */
+    TOK_STRING,      /* String literal "..." */
     TOK_COLON,       /* : (start definition) */
     TOK_SEMICOLON,   /* ; (end definition) */
     TOK_LPAREN,      /* ( (start quotation) */

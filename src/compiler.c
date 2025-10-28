@@ -12,6 +12,8 @@
 #include <stdio.h>
 
 /* Forward declarations */
+static bool compile_lparen(compiler_t* comp);
+static bool compile_rparen(compiler_t* comp);
 static bool compile_if(compiler_t* comp);
 static bool compile_times_dispatch(compiler_t* comp);
 static bool compile_times(compiler_t* comp);
@@ -207,6 +209,43 @@ static bool compile_number(compiler_t* comp, int64_t num) {
 
     if (comp->verbose) {
         printf("  LIT %ld → i64\n", num);
+    }
+
+    return true;
+}
+
+/* Compile a string literal */
+static bool compile_string(compiler_t* comp, const char* str) {
+    /* Legacy: Emit [LIT 0] placeholder */
+    cell_buffer_append(comp->cells, encode_lit(0));
+
+    /* Store type signature for string (-> str) */
+    unsigned char* sig_cid = db_store_type_sig(comp->db, NULL, "str");
+    if (!sig_cid) {
+        fprintf(stderr, "Error: Failed to store string type signature\n");
+        return false;
+    }
+
+    /* Store string data as blob (UTF-8 bytes including null terminator) */
+    size_t str_len = strlen(str) + 1;  /* Include null terminator */
+    unsigned char* cid = db_store_blob(comp->db, BLOB_STRING, sig_cid,
+                                       (const uint8_t*)str, str_len);
+    free(sig_cid);
+
+    if (!cid) {
+        fprintf(stderr, "Error: Failed to store string literal\n");
+        return false;
+    }
+
+    /* Encode CID reference to string in blob */
+    encode_cid_ref(comp->blob, BLOB_DATA, cid);
+    free(cid);
+
+    /* Push str type (string reference) */
+    push_type(comp, TYPE_STR);
+
+    if (comp->verbose) {
+        printf("  STR \"%s\" → str\n", str);
     }
 
     return true;
@@ -419,6 +458,8 @@ static bool quot_compile_with_context(
 
         if (tok->type == TOK_NUMBER) {
             success = compile_number(comp, tok->number);
+        } else if (tok->type == TOK_STRING) {
+            success = compile_string(comp, tok->text);
         } else if (tok->type == TOK_WORD) {
             success = compile_word(comp, tok->text);
         } else if (tok->type == TOK_LPAREN) {
@@ -1346,6 +1387,8 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
             /* Normal compilation or quotation delimiters */
             if (tok.type == TOK_NUMBER) {
                 success = compile_number(comp, tok.number);
+            } else if (tok.type == TOK_STRING) {
+                success = compile_string(comp, tok.text);
             } else if (tok.type == TOK_WORD) {
                 success = compile_word(comp, tok.text);
             } else if (tok.type == TOK_LPAREN) {
