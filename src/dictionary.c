@@ -59,7 +59,7 @@ void dict_free(dictionary_t* dict) {
 
 bool dict_add(dictionary_t* dict, const char* name, void* addr,
               const unsigned char* cid, uint16_t prim_id, type_sig_t* sig, bool is_primitive,
-              bool is_immediate, immediate_handler_t handler) {
+              bool is_immediate, immediate_handler_t handler, word_definition_t* word_def) {
     unsigned long hash = hash_string(name);
     size_t bucket = hash % dict->bucket_count;
 
@@ -82,6 +82,7 @@ bool dict_add(dictionary_t* dict, const char* name, void* addr,
     entry->is_primitive = is_primitive;
     entry->is_immediate = is_immediate;
     entry->handler = handler;
+    entry->word_def = word_def;  /* Design B: Store uncompiled word definition */
 
     if (sig) {
         memcpy(&entry->signature, sig, sizeof(type_sig_t));

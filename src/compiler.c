@@ -21,6 +21,8 @@ static bool compile_times_until(compiler_t* comp);
 static bool compile_true(compiler_t* comp);
 static bool compile_false(compiler_t* comp);
 static bool materialize_quotations(compiler_t* comp);
+static blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* word_def,
+                                                  type_id_t* input_types, int input_count);
 
 /* Stack primitive immediate handlers */
 static bool compile_drop(compiler_t* comp);
@@ -176,24 +178,24 @@ void compiler_register_primitives(compiler_t* comp) {
     /* Type checking handled dynamically based on quotations */
     parse_type_sig("->", &sig);  /* Minimal signature - real checking in handler */
     dict_add(comp->dict, "if", NULL, NULL, 0, &sig, false, true,
-             (immediate_handler_t)compile_if);
+             (immediate_handler_t)compile_if, NULL);
 
     /* true: ( -- -1 ) */
     parse_type_sig("-> i64", &sig);
     dict_add(comp->dict, "true", NULL, NULL, 0, &sig, false, true,
-             (immediate_handler_t)compile_true);
+             (immediate_handler_t)compile_true, NULL);
 
     /* false: ( -- 0 ) */
     parse_type_sig("-> i64", &sig);
     dict_add(comp->dict, "false", NULL, NULL, 0, &sig, false, true,
-             (immediate_handler_t)compile_false);
+             (immediate_handler_t)compile_false, NULL);
 
     /* times: Polymorphic - dispatches based on quotation stack depth
      *   1 quotation:  count ( body ) times - counted loop
      *   2 quotations: ( cond ) ( body ) times - until-style loop */
     parse_type_sig("i64 ->", &sig);
     dict_add(comp->dict, "times", NULL, NULL, 0, &sig, false, true,
-             (immediate_handler_t)compile_times_dispatch);
+             (immediate_handler_t)compile_times_dispatch, NULL);
 
     /* Stack manipulation primitives with compile-time RC tracking */
     /* These override the runtime primitives registered by register_primitives() */
@@ -201,27 +203,27 @@ void compiler_register_primitives(compiler_t* comp) {
     /* drop: ( a -- ) */
     parse_type_sig("a ->", &sig);
     dict_add(comp->dict, "drop", NULL, NULL, 0, &sig, false, true,
-             (immediate_handler_t)compile_drop);
+             (immediate_handler_t)compile_drop, NULL);
 
     /* dup: ( a -- a a ) */
     parse_type_sig("a -> a a", &sig);
     dict_add(comp->dict, "dup", NULL, NULL, 0, &sig, false, true,
-             (immediate_handler_t)compile_dup);
+             (immediate_handler_t)compile_dup, NULL);
 
     /* swap: ( a b -- b a ) */
     parse_type_sig("a b -> b a", &sig);
     dict_add(comp->dict, "swap", NULL, NULL, 0, &sig, false, true,
-             (immediate_handler_t)compile_swap);
+             (immediate_handler_t)compile_swap, NULL);
 
     /* over: ( a b -- a b a ) */
     parse_type_sig("a b -> a b a", &sig);
     dict_add(comp->dict, "over", NULL, NULL, 0, &sig, false, true,
-             (immediate_handler_t)compile_over);
+             (immediate_handler_t)compile_over, NULL);
 
     /* rot: ( a b c -- b c a ) */
     parse_type_sig("a b c -> b c a", &sig);
     dict_add(comp->dict, "rot", NULL, NULL, 0, &sig, false, true,
-             (immediate_handler_t)compile_rot);
+             (immediate_handler_t)compile_rot, NULL);
 
     debug_dump_dict_stats(comp->dict);
 }
@@ -519,6 +521,104 @@ static bool compile_word(compiler_t* comp, const char* name) {
         return entry->handler(comp);
     }
 
+    /* Design B: Check if this word needs monomorphization */
+    if (entry->word_def) {
+        /* This word has stored tokens - compile it with concrete types */
+        if (comp->verbose) {
+            printf("  Monomorphizing '%s' with current stack types\n", name);
+        }
+
+        /* Get concrete input types from current type stack */
+        int input_count = entry->signature.input_count;
+        if (comp->type_stack_depth < input_count) {
+            fprintf(stderr, "Type error: '%s' needs %d inputs but stack has %d\n",
+                    name, input_count, comp->type_stack_depth);
+            return false;
+        }
+
+        /* Extract input types (bottom N items on stack) */
+        type_id_t concrete_inputs[MAX_TYPE_STACK];
+        int start_idx = comp->type_stack_depth - input_count;
+        for (int i = 0; i < input_count; i++) {
+            concrete_inputs[i] = comp->type_stack[start_idx + i].type;
+        }
+
+        /* Compile the word with concrete types */
+        blob_buffer_t* compiled_blob = word_compile_with_context(comp, entry->word_def,
+                                                                  concrete_inputs, input_count);
+        if (!compiled_blob) {
+            fprintf(stderr, "Failed to compile word '%s' with concrete types\n", name);
+            return false;
+        }
+
+        /* TODO Phase 3: Cache the compiled specialization by (name, concrete_types) */
+
+        /* Store the compiled blob in database */
+        /* Build type signature string for this specialization */
+        char type_sig_str[256];
+        char *p = type_sig_str;
+        for (int i = 0; i < input_count; i++) {
+            switch (concrete_inputs[i]) {
+                case TYPE_I64: p += sprintf(p, "i64 "); break;
+                case TYPE_U64: p += sprintf(p, "u64 "); break;
+                case TYPE_F64: p += sprintf(p, "f64 "); break;
+                case TYPE_PTR: p += sprintf(p, "ptr "); break;
+                case TYPE_BOOL: p += sprintf(p, "bool "); break;
+                case TYPE_STR: p += sprintf(p, "str "); break;
+                default: p += sprintf(p, "? "); break;
+            }
+        }
+        p += sprintf(p, "-> ");
+        for (int i = 0; i < comp->type_stack_depth; i++) {
+            type_id_t t = comp->type_stack[i].type;
+            switch (t) {
+                case TYPE_I64: p += sprintf(p, "i64 "); break;
+                case TYPE_U64: p += sprintf(p, "u64 "); break;
+                case TYPE_F64: p += sprintf(p, "f64 "); break;
+                case TYPE_PTR: p += sprintf(p, "ptr "); break;
+                case TYPE_BOOL: p += sprintf(p, "bool "); break;
+                case TYPE_STR: p += sprintf(p, "str "); break;
+                default: p += sprintf(p, "? "); break;
+            }
+        }
+
+        unsigned char* sig_cid = db_store_type_sig(comp->db, NULL, type_sig_str);
+        if (!sig_cid) {
+            fprintf(stderr, "Failed to store type signature for specialization\n");
+            blob_buffer_free(compiled_blob);
+            return false;
+        }
+
+        unsigned char* cid = db_store_blob(comp->db, BLOB_WORD, sig_cid,
+                                           compiled_blob->data, compiled_blob->size);
+        free(sig_cid);
+        blob_buffer_free(compiled_blob);
+
+        if (!cid) {
+            fprintf(stderr, "Failed to store compiled specialization\n");
+            return false;
+        }
+
+        /* Apply type signature to update type stack */
+        if (!apply_signature(comp, &entry->signature)) {
+            free(cid);
+            fprintf(stderr, "Type error in word: %s\n", name);
+            return false;
+        }
+
+        /* Emit call to the specialized version */
+        cell_buffer_append(comp->cells, encode_xt(NULL));
+        encode_cid_ref(comp->blob, BLOB_WORD, cid);
+        free(cid);
+
+        if (comp->verbose) {
+            printf("  Compiled and stored specialization of '%s'\n", name);
+        }
+
+        return true;
+    }
+
+    /* Not a stored word - proceed with normal compilation */
     /* Apply type signature */
     if (!apply_signature(comp, &entry->signature)) {
         fprintf(stderr, "Type error in word: %s\n", name);
@@ -706,6 +806,149 @@ static bool quot_compile_with_context(
     }
 
     return success;
+}
+
+/* Design B: Compile a word with concrete type context
+ * This is called at call-site with known input types to monomorphize the word */
+static blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* word_def,
+                                                  type_id_t* input_types, int input_count) {
+    if (!word_def) {
+        fprintf(stderr, "word_compile_with_context: NULL word_def\n");
+        return NULL;
+    }
+
+    if (comp->verbose) {
+        printf("  Compiling '%s' with concrete types: ", word_def->name);
+        for (int i = 0; i < input_count; i++) {
+            printf("%d ", input_types[i]);
+        }
+        printf("\n");
+    }
+
+    /* Save current compiler state */
+    cell_buffer_t* saved_cells = comp->cells;
+    blob_buffer_t* saved_blob = comp->blob;
+    int saved_type_depth = comp->type_stack_depth;
+    type_stack_entry_t saved_type_stack[MAX_TYPE_STACK];
+    for (int i = 0; i < saved_type_depth; i++) {
+        saved_type_stack[i] = comp->type_stack[i];
+    }
+    int saved_slot_count = comp->slot_count;
+    bool saved_slots[MAX_SLOTS];
+    memcpy(saved_slots, comp->slot_used, sizeof(saved_slots));
+
+    /* Create fresh buffers for this compilation */
+    cell_buffer_t* fresh_cells = cell_buffer_create();
+    blob_buffer_t* fresh_blob = blob_buffer_create();
+    if (!fresh_cells || !fresh_blob) {
+        fprintf(stderr, "Failed to create compilation buffers\n");
+        if (fresh_cells) cell_buffer_free(fresh_cells);
+        if (fresh_blob) blob_buffer_free(fresh_blob);
+        return NULL;
+    }
+
+    comp->cells = fresh_cells;
+    comp->blob = fresh_blob;
+
+    /* Initialize type stack with concrete input types */
+    comp->type_stack_depth = 0;
+    comp->slot_count = 0;
+    memset(comp->slot_used, 0, sizeof(comp->slot_used));
+
+    for (int i = 0; i < input_count; i++) {
+        push_type(comp, input_types[i]);
+    }
+
+    /* Compile each token in the word definition */
+    bool success = true;
+    for (int i = 0; i < word_def->token_count && success; i++) {
+        token_t* tok = &word_def->tokens[i];
+
+        /* Compile based on token type */
+        switch (tok->type) {
+            case TOK_NUMBER:
+                success = compile_number(comp, tok->number);
+                break;
+            case TOK_STRING:
+                success = compile_string(comp, tok->text);
+                break;
+            case TOK_WORD:
+                success = compile_word(comp, tok->text);
+                break;
+            case TOK_LPAREN:
+                success = compile_lparen(comp);
+                break;
+            case TOK_RPAREN:
+                success = compile_rparen(comp);
+                break;
+            default:
+                fprintf(stderr, "Unexpected token type %d during word compilation\n", tok->type);
+                success = false;
+                break;
+        }
+    }
+
+    blob_buffer_t* result = NULL;
+
+    if (success) {
+        /* Materialize any pending quotations */
+        if (comp->quot_stack_depth > 0) {
+            success = materialize_quotations(comp);
+        }
+    }
+
+    if (success) {
+        /* Emit FREE for non-returned slots */
+        bool returned_slots[MAX_SLOTS] = {false};
+        for (int i = 0; i < comp->type_stack_depth; i++) {
+            int slot_id = comp->type_stack[i].slot_id;
+            if (slot_id >= 0 && slot_id < MAX_SLOTS) {
+                returned_slots[slot_id] = true;
+            }
+        }
+
+        dict_entry_t* free_prim = dict_lookup(comp->dict, "free");
+        for (int slot_id = 0; slot_id < comp->slot_count; slot_id++) {
+            if (comp->slot_used[slot_id] && !returned_slots[slot_id]) {
+                if (comp->verbose) {
+                    printf("    FREE slot=%d (not returned)\n", slot_id);
+                }
+                cell_buffer_append(comp->cells, encode_lit(slot_id));
+                encode_inline_literal(comp->blob, slot_id);
+                if (free_prim) {
+                    cell_buffer_append(comp->cells, encode_xt(free_prim->addr));
+                    encode_primitive(comp->blob, free_prim->prim_id);
+                }
+            }
+        }
+
+        /* Emit EXIT */
+        cell_buffer_append(comp->cells, encode_exit());
+
+        /* Return the compiled blob (transfer ownership) */
+        result = comp->blob;
+        comp->blob = NULL;  /* Prevent double-free */
+
+        /* Clean up cells (not needed - we only return blob) */
+        cell_buffer_free(comp->cells);
+        comp->cells = NULL;
+    } else {
+        /* Compilation failed - clean up */
+        cell_buffer_free(fresh_cells);
+        blob_buffer_free(fresh_blob);
+    }
+
+    /* Restore compiler state */
+    comp->cells = saved_cells;
+    comp->blob = saved_blob;
+    comp->type_stack_depth = saved_type_depth;
+    for (int i = 0; i < saved_type_depth; i++) {
+        comp->type_stack[i] = saved_type_stack[i];
+    }
+    comp->slot_count = saved_slot_count;
+    memcpy(comp->slot_used, saved_slots, sizeof(saved_slots));
+
+    return result;
 }
 
 /* Start quotation - save current state and begin new compilation */
@@ -1726,7 +1969,14 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     crash_context_set_word(word_name);
 
     if (comp->verbose) {
-        printf("\nCompiling word: %s\n", word_name);
+        printf("\nDefining word: %s (collecting tokens)\n", word_name);
+    }
+
+    /* Create word definition to store tokens (Design B: lazy compilation) */
+    word_definition_t* word_def = word_definition_create(word_name);
+    if (!word_def) {
+        free(word_name);
+        return false;
     }
 
     /* Reset buffers and type stack for new definition */
@@ -1734,15 +1984,20 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     blob_buffer_clear(comp->blob);
     comp->type_stack_depth = 0;
 
-    /* If there's a pending type signature, pre-populate type stack with inputs */
+    /* If there's a pending type signature, store it with the word definition */
     if (comp->pending_type_sig) {
-        for (int i = 0; i < comp->pending_type_sig->input_count; i++) {
-            push_type(comp, comp->pending_type_sig->inputs[i]);
+        word_def->type_sig = malloc(sizeof(type_sig_t));
+        if (word_def->type_sig) {
+            memcpy(word_def->type_sig, comp->pending_type_sig, sizeof(type_sig_t));
         }
         if (comp->verbose) {
-            printf("  Using type signature with %d inputs\n",
-                   comp->pending_type_sig->input_count);
+            printf("  Stored type signature with %d inputs → %d outputs\n",
+                   comp->pending_type_sig->input_count,
+                   comp->pending_type_sig->output_count);
         }
+        /* Clear pending signature */
+        free(comp->pending_type_sig);
+        comp->pending_type_sig = NULL;
     }
 
     /* Build source text as we compile */
@@ -1789,31 +2044,29 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
 
         bool success = false;
 
-        /* If inside a quotation, capture tokens instead of compiling */
-        if (comp->buffer_stack_depth > 0 &&
-            tok.type != TOK_LPAREN && tok.type != TOK_RPAREN) {
-            /* Append token to current quotation */
+        /* Handle quotation delimiters specially */
+        if (tok.type == TOK_LPAREN) {
+            success = compile_lparen(comp);
+        } else if (tok.type == TOK_RPAREN) {
+            success = compile_rparen(comp);
+        }
+        /* If inside a quotation, capture tokens to quotation */
+        else if (comp->buffer_stack_depth > 0) {
             quotation_t* quot = comp->quot_stack[comp->quot_stack_depth - 1];
             success = quot_append_token(quot, &tok);
 
             if (comp->verbose && success) {
-                printf("    captured token: type=%d text='%s'\n",
+                printf("    captured to quotation: type=%d text='%s'\n",
                        tok.type, tok.text ? tok.text : "NULL");
             }
-        } else {
-            /* Normal compilation or quotation delimiters */
-            if (tok.type == TOK_NUMBER) {
-                success = compile_number(comp, tok.number);
-            } else if (tok.type == TOK_STRING) {
-                success = compile_string(comp, tok.text);
-            } else if (tok.type == TOK_WORD) {
-                success = compile_word(comp, tok.text);
-            } else if (tok.type == TOK_LPAREN) {
-                success = compile_lparen(comp);
-            } else if (tok.type == TOK_RPAREN) {
-                success = compile_rparen(comp);
-            } else {
-                fprintf(stderr, "Unexpected token in definition: %s\n", tok.text);
+        }
+        /* Design B: Collect all other tokens to word definition */
+        else {
+            success = word_def_append_token(word_def, &tok);
+
+            if (comp->verbose && success) {
+                printf("    captured to word: type=%d text='%s'\n",
+                       tok.type, tok.text ? tok.text : "NULL");
             }
         }
 
@@ -1826,131 +2079,43 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
         }
     }
 
-    /* Materialize any pending quotations before ending definition */
-    if (comp->quot_stack_depth > 0) {
-        if (!materialize_quotations(comp)) {
-            free(source_text);
-            free(word_name);
-            return false;
-        }
+    /* Design B: Store word definition in compiler cache for later compilation */
+    if (comp->word_def_count >= MAX_WORD_DEFS) {
+        fprintf(stderr, "Too many word definitions (max %d)\n", MAX_WORD_DEFS);
+        word_definition_free(word_def);
+        free(source_text);
+        free(word_name);
+        return false;
     }
 
-    /* Emit FREE for non-returned slots (slot-based memory management) */
-    /* Collect slot_ids being returned */
-    bool returned_slots[MAX_SLOTS] = {false};
-    for (int i = 0; i < comp->type_stack_depth; i++) {
-        int slot_id = comp->type_stack[i].slot_id;
-        if (slot_id >= 0 && slot_id < MAX_SLOTS) {
-            returned_slots[slot_id] = true;
-        }
-    }
-
-    /* Emit FREE for allocated slots that aren't returned */
-    dict_entry_t* free_prim = dict_lookup(comp->dict, "free");
-    for (int slot_id = 0; slot_id < comp->slot_count; slot_id++) {
-        if (comp->slot_used[slot_id] && !returned_slots[slot_id]) {
-            /* This slot was allocated but not returned - free it */
-            if (comp->verbose) {
-                printf("  FREE slot=%d (not returned)\n", slot_id);
-            }
-
-            /* Emit: push slot_id, call free */
-            cell_buffer_append(comp->cells, encode_lit(slot_id));
-            encode_inline_literal(comp->blob, slot_id);
-
-            if (free_prim) {
-                cell_buffer_append(comp->cells, encode_xt(free_prim->addr));
-                encode_primitive(comp->blob, free_prim->prim_id);
-            }
-        }
-    }
-
-    /* Emit EXIT */
-    cell_buffer_append(comp->cells, encode_exit());
-
-    /* Build type signature from final stack state */
-    /* For now, just use "-> " + output types */
-    /* TODO: input type inference for words without literals */
-    char type_sig[256];
-    if (comp->type_stack_depth > 0) {
-        strcpy(type_sig, "-> ");
-        for (int i = 0; i < comp->type_stack_depth; i++) {
-            type_id_t t = comp->type_stack[i].type;
-            /* Handle type variables */
-            if (t >= TYPE_VAR_A && t <= TYPE_VAR_Z) {
-                char var[3] = {(char)('a' + (t - TYPE_VAR_A)), ' ', '\0'};
-                strcat(type_sig, var);
-            } else {
-                switch (t) {
-                    case TYPE_I64: strcat(type_sig, "i64 "); break;
-                    case TYPE_U64: strcat(type_sig, "u64 "); break;
-                    case TYPE_F64: strcat(type_sig, "f64 "); break;
-                    case TYPE_PTR: strcat(type_sig, "ptr "); break;
-                    case TYPE_BOOL: strcat(type_sig, "bool "); break;
-                    case TYPE_STR: strcat(type_sig, "str "); break;
-                    case TYPE_ANY: strcat(type_sig, "any "); break;
-                    case TYPE_UNKNOWN: strcat(type_sig, "? "); break;
-                    default: strcat(type_sig, "? "); break;
-                }
-            }
-        }
-    } else {
-        strcpy(type_sig, "->");
-    }
+    comp->word_defs[comp->word_def_count++] = word_def;
 
     if (comp->verbose) {
-        printf("  Type signature: %s\n", type_sig);
-        printf("  Source: %s\n", source_text);
-        printf("  %zu cells, %zu bytes\n",
-               comp->cells->count, comp->cells->count * 8);
-        printf("  %zu blob bytes\n", comp->blob->size);
+        printf("  Stored %d tokens in word definition cache\n", word_def->token_count);
     }
 
-    /* Legacy: Store cells in database */
-    bool stored = db_store_word(comp->db, word_name, "user",
-                                (uint8_t*)comp->cells->cells,
-                                comp->cells->count,
-                                type_sig,
-                                source_text);
+    /* Add placeholder dictionary entry so the word can be referenced */
+    type_sig_t placeholder_sig;
 
-    if (!stored) {
-        fprintf(stderr, "Failed to store word (legacy): %s\n", word_name);
-        free(source_text);
-        free(word_name);
-        return false;
-    }
-
-    /* CID-based: Compute CID and store blob */
-    unsigned char* sig_cid = db_store_type_sig(comp->db, NULL, type_sig);
-    if (!sig_cid) {
-        fprintf(stderr, "Failed to store type signature for: %s\n", word_name);
-        free(source_text);
-        free(word_name);
-        return false;
-    }
-
-    unsigned char* word_cid = db_store_blob(comp->db, BLOB_WORD, sig_cid,
-                                             comp->blob->data,
-                                             comp->blob->size);
-    free(sig_cid);
-
-    if (!word_cid) {
-        fprintf(stderr, "Failed to store word blob: %s\n", word_name);
-        free(source_text);
-        free(word_name);
-        return false;
-    }
-
-    DEBUG_COMPILER("Stored word '%s' (blob_size=%zu)", word_name, comp->blob->size);
-
-    /* Add to dictionary so it can be used in later definitions */
-    type_sig_t sig;
-    if (parse_type_sig(type_sig, &sig)) {
-        /* Pass the CID so other words can reference it */
-        dict_add(comp->dict, word_name, NULL, word_cid, 0, &sig, false, false, NULL);
+    if (word_def->type_sig) {
+        /* Use provided type signature */
+        placeholder_sig = *word_def->type_sig;
+        if (comp->verbose) {
+            printf("  Using explicit type signature: %d inputs → %d outputs\n",
+                   placeholder_sig.input_count, placeholder_sig.output_count);
+        }
     } else {
-        free(word_cid);
+        /* Generic signature: -> ? (unknown outputs, will be determined at call site) */
+        placeholder_sig.input_count = 0;
+        placeholder_sig.output_count = 1;
+        placeholder_sig.outputs[0] = TYPE_UNKNOWN;
+        if (comp->verbose) {
+            printf("  No type signature provided, using placeholder: -> ?\n");
+        }
     }
+
+    /* Add dict entry with NULL addr (indicates uncompiled word) */
+    dict_add(comp->dict, word_name, NULL, NULL, 0, &placeholder_sig, false, false, NULL, word_def);
 
     free(source_text);
     free(word_name);

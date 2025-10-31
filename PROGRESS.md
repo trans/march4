@@ -1,6 +1,55 @@
 # March Language - Working Features Summary
 
-**Current Status (2025-10-30):** Slot-based memory management complete. Core compiler working with 45 primitives, type checking, quotations, conditionals, and loops. Foundation ready for Design B (monomorphization on first use).
+**Current Status (2025-10-31):** Design B monomorphization (Phases 1-2) complete! Words stored as tokens, compiled at call-site with concrete types. Slot-based memory management working. Core compiler with 45 primitives, type checking, quotations, conditionals, loops.
+
+---
+
+  ✅ 12. Design B: Token Storage & Monomorphization (Phases 1-2) - COMPLETE!
+
+  Date: 2025-10-31
+  Status: ✅ Phases 1-2 Complete | ⏳ Phase 3 (cache) & Phase 5 (loader) TODO
+
+  **Problem:** Polymorphic words need type context during compilation, but definitions (`: ddup dup dup ;`) have no concrete types. Previous slot-based approach required explicit type signatures.
+
+  **Solution:** Design B - Store word definitions as tokens (like quotations), compile lazily at call-site with concrete types from type stack (monomorphization).
+
+  **Phase 1: Token Storage**
+  - Modified `compile_definition()` to collect tokens instead of compiling
+  - Created `word_definition_t` structure (name, tokens[], type_sig)
+  - Words stored in compiler cache `comp->word_defs[]`
+  - Placeholder dict entries (NULL addr = uncompiled)
+  - Dictionary extended with `word_def` field
+
+  **Phase 2: Call-Site Compilation**
+  - `word_compile_with_context(comp, word_def, input_types, input_count)`
+    - Compiles tokens with concrete type context
+    - Full slot-based memory management (FREE emission)
+    - Returns compiled blob
+  - `compile_word()` detects uncompiled words via `entry->word_def`
+  - Extracts concrete types from call-site type stack
+  - Generates specialized version, stores in database
+  - Emits CID reference to specialization
+
+  **Test Results:**
+  - ✅ Words store as tokens: "Stored 2 tokens in word definition cache"
+  - ✅ No compilation at definition: "Defining word: ddup (collecting tokens)"
+  - ✅ Monomorphization logic implemented (needs loader for end-to-end test)
+
+  **Files Modified:**
+  - `src/compiler.h` - word_definition_t, word_defs cache, MAX_WORD_DEFS
+  - `src/compiler.c` - Token collection, word_compile_with_context(), monomorphization
+  - `src/dictionary.h/c` - word_def field, dict_add() signature
+
+  **Current Limitations:**
+  - Polymorphic words still need explicit type sigs (`$ a -> a a a ;`)
+  - Phase 3 (specialization cache) not implemented - recompiles each use
+  - Phase 5 (loader integration) incomplete - can't execute token-only words
+  - No database storage of token definitions yet
+
+  **Next Steps:**
+  - Phase 3: Specialization cache to avoid recompilation
+  - Phase 5: Loader integration to execute token-based words
+  - Full end-to-end test with execution
 
 ---
 

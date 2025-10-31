@@ -67,7 +67,7 @@ void* primitive_dispatch_table[256] = {
 #define REG_PRIM(name_str, prim_id, op_func, type_str) \
     do { \
         parse_type_sig(type_str, &sig); \
-        dict_add(dict, name_str, &op_func, NULL, prim_id, &sig, true, false, NULL); \
+        dict_add(dict, name_str, &op_func, NULL, prim_id, &sig, true, false, NULL, NULL); \
     } while(0)
 
 void register_primitives(dictionary_t* dict) {

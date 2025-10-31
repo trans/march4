@@ -1,6 +1,6 @@
 # March Development Log
 
-## 2025-01-30 - Current Status
+## 2025-10-31 - Current Status
 
 **Where we are:**
 - ✅ Slot-based memory management complete and working
@@ -8,20 +8,76 @@
 - ✅ Type checking with polymorphic type variables (a-z)
 - ✅ Quotations, conditionals (if), loops (times)
 - ✅ Compile-time allocation tracking, automatic FREE emission
-- ✅ Per-word AOT compilation (with explicit type sigs for polymorphic words)
+- ✅ **Design B: Token storage and monomorphization** (Phases 1-2 complete)
+  - Words stored as tokens, not compiled at definition
+  - Monomorphization at call-site with concrete types
+  - Polymorphic words work with explicit type signatures
 
 **What's next:**
-- 🎯 Design B: Monomorphization on first use
-  - Store word tokens instead of compiling at definition
-  - Compile at call site with concrete types
-  - Cache specializations by type signature
-  - Enables `ddup` to work without explicit type sig
+- Phase 3: Specialization caching (avoid recompilation)
+- Phase 5: Loader integration (execute token-based words)
+- Runtime slot infrastructure for FREE primitive
 
 **Key files:**
 - `CONSIDER.md` - Design B architecture from ChatGPT
 - `LOG.md` - Development history
 - `PROGRESS.md` - Feature summary
 - `docs/STATUS.md` - Comprehensive status
+
+---
+
+## 2025-10-31 - Design B: Token Storage & Monomorphization (Phases 1-2)
+
+**Goal:** Enable polymorphic words without whole-program analysis by storing word definitions as tokens and compiling them lazily at call-sites with concrete types.
+
+**Implemented:**
+
+**Phase 1: Token Storage**
+- Modified `compile_definition()` to collect tokens instead of compiling
+- Created `word_definition_t` structure: stores name, tokens array, type signature
+- Words stored in `comp->word_defs[]` cache during compilation
+- Placeholder dict entries added (NULL addr indicates uncompiled word)
+- Dictionary extended with `word_def` field for token storage
+
+**Phase 2: Call-Site Compilation (Monomorphization)**
+- Implemented `word_compile_with_context(comp, word_def, input_types, input_count)`
+  - Takes stored tokens and concrete types from call-site
+  - Compiles word body with type context
+  - Emits FREE for non-returned slots
+  - Returns compiled blob
+- Modified `compile_word()` to detect uncompiled words via `entry->word_def`
+- Extracts concrete types from current type stack
+- Calls `word_compile_with_context()` to generate specialized version
+- Stores compiled blob in database with concrete type signature
+- Emits CID reference to specialized version
+
+**Code changes:**
+- `compiler.h`: Added `word_definition_t` structure, word_defs cache
+- `compiler.c`:
+  - Token collection in `compile_definition()` (replaces immediate compilation)
+  - `word_compile_with_context()` for monomorphization
+  - Call-site detection and compilation in `compile_word()`
+- `dictionary.h/c`: Added `word_def` field to dict_entry, updated `dict_add()`
+- Forward declaration for `word_compile_with_context()`
+
+**Test results:**
+```
+$ marchc -v test_ddup.march
+Defining word: ddup (collecting tokens)
+  Stored type signature with 1 inputs → 3 outputs
+  captured to word: type=2 text='dup'
+  captured to word: type=2 text='dup'
+  Stored 2 tokens in word definition cache ✓
+```
+
+**Current limitation:**
+- Polymorphic words still require explicit type signatures (`$ a -> a a a ;`)
+- Loader integration incomplete - can't execute token-only words yet (Phase 5)
+- No specialization cache yet - recompiles on each use (Phase 3)
+
+**Key insight:** Words are now like quotations - stored as tokens, compiled when used with concrete types. This is the foundation for true polymorphism without whole-program analysis.
+
+**Next:** Phase 3 (specialization cache) and Phase 5 (loader integration).
 
 ---
 

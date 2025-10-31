@@ -50,7 +50,7 @@ typedef struct {
 } quotation_t;
 
 /* Word definition (stored form) - words are named quotations */
-typedef struct {
+typedef struct word_definition {
     char* name;
     token_t* tokens;               /* Array of definition tokens */
     int token_count;
