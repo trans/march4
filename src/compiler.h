@@ -126,4 +126,8 @@ bool compiler_compile_file(compiler_t* comp, const char* filename);
 /* Register primitives */
 void compiler_register_primitives(compiler_t* comp);
 
+/* Phase 5: On-demand compilation for token-based words */
+blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* word_def,
+                                          type_id_t* input_types, int input_count);
+
 #endif /* MARCH_COMPILER_H */

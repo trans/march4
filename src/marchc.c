@@ -208,7 +208,7 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        runner_t* runner = runner_create(loader);
+        runner_t* runner = runner_create(loader, comp);
         if (!runner) {
             fprintf(stderr, "Error: Cannot create runner\n");
             loader_free(loader);

@@ -8,6 +8,7 @@
 
 #include "types.h"
 #include "loader.h"
+#include "compiler.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -20,10 +21,11 @@ extern uint64_t data_stack_base[1024];  /* BSS array, not pointer */
 /* Runner context */
 typedef struct {
     loader_t* loader;
+    compiler_t* comp;  /* For on-demand compilation of token-based words (Phase 5) */
 } runner_t;
 
 /* Create/free runner */
-runner_t* runner_create(loader_t* loader);
+runner_t* runner_create(loader_t* loader, compiler_t* comp);
 void runner_free(runner_t* runner);
 
 /* Execute a word by name */

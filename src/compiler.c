@@ -21,8 +21,6 @@ static bool compile_times_until(compiler_t* comp);
 static bool compile_true(compiler_t* comp);
 static bool compile_false(compiler_t* comp);
 static bool materialize_quotations(compiler_t* comp);
-static blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* word_def,
-                                                  type_id_t* input_types, int input_count);
 
 /* Stack primitive immediate handlers */
 static bool compile_drop(compiler_t* comp);
@@ -911,9 +909,10 @@ static bool quot_compile_with_context(
 }
 
 /* Design B: Compile a word with concrete type context
- * This is called at call-site with known input types to monomorphize the word */
-static blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* word_def,
-                                                  type_id_t* input_types, int input_count) {
+ * This is called at call-site with known input types to monomorphize the word
+ * Phase 5: Made public for on-demand compilation in runner */
+blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* word_def,
+                                          type_id_t* input_types, int input_count) {
     if (!word_def) {
         fprintf(stderr, "word_compile_with_context: NULL word_def\n");
         return NULL;
