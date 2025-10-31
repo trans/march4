@@ -23,6 +23,9 @@
 /* Maximum cached word definitions */
 #define MAX_WORD_DEFS 256
 
+/* Maximum specialization cache entries */
+#define MAX_SPECIALIZATIONS 512
+
 /* Quotation kind */
 typedef enum {
     QUOT_LITERAL,  /* Lexical - uncompiled tokens, compile at use site */
@@ -57,6 +60,14 @@ typedef struct word_definition {
     int token_capacity;
     type_sig_t* type_sig;          /* Optional explicit type signature */
 } word_definition_t;
+
+/* Specialization cache entry - stores compiled versions by concrete types */
+typedef struct {
+    char* word_name;               /* Name of the word */
+    type_id_t input_types[8];      /* Concrete input types (cache key) */
+    int input_count;
+    unsigned char* cid;            /* CID of compiled specialization (32 bytes) */
+} specialization_t;
 
 /* Compiler state */
 typedef struct compiler {
@@ -98,6 +109,11 @@ typedef struct compiler {
     /* Words are named quotations - stored as tokens, compiled at call site */
     word_definition_t* word_defs[MAX_WORD_DEFS];
     int word_def_count;
+
+    /* Specialization cache - stores compiled versions by concrete types */
+    /* Cache key: (word_name, input_types[]) → CID */
+    specialization_t specializations[MAX_SPECIALIZATIONS];
+    int specialization_count;
 } compiler_t;
 
 /* Create/free compiler */

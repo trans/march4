@@ -49,6 +49,7 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     comp->quot_counter = 0;
     comp->pending_quot_count = 0;
     comp->word_def_count = 0;
+    comp->specialization_count = 0;
 
     /* Initialize slot allocation */
     comp->slot_count = 0;
@@ -142,6 +143,81 @@ static word_definition_t* find_word_definition(compiler_t* comp, const char* nam
     return NULL;
 }
 
+/* Specialization cache: Look up compiled version by (word_name, input_types)
+ * Returns cached CID if found, NULL otherwise */
+static unsigned char* specialization_lookup(compiler_t* comp, const char* word_name,
+                                             type_id_t* input_types, int input_count) {
+    for (int i = 0; i < comp->specialization_count; i++) {
+        specialization_t* spec = &comp->specializations[i];
+
+        /* Check if word name matches */
+        if (strcmp(spec->word_name, word_name) != 0) {
+            continue;
+        }
+
+        /* Check if input count matches */
+        if (spec->input_count != input_count) {
+            continue;
+        }
+
+        /* Check if all input types match */
+        bool types_match = true;
+        for (int j = 0; j < input_count; j++) {
+            if (spec->input_types[j] != input_types[j]) {
+                types_match = false;
+                break;
+            }
+        }
+
+        if (types_match) {
+            return spec->cid;  /* Cache hit! */
+        }
+    }
+
+    return NULL;  /* Cache miss */
+}
+
+/* Specialization cache: Store compiled version */
+static bool specialization_store(compiler_t* comp, const char* word_name,
+                                  type_id_t* input_types, int input_count,
+                                  const unsigned char* cid) {
+    if (comp->specialization_count >= MAX_SPECIALIZATIONS) {
+        fprintf(stderr, "Warning: Specialization cache full (max %d)\n", MAX_SPECIALIZATIONS);
+        return false;
+    }
+
+    specialization_t* spec = &comp->specializations[comp->specialization_count];
+
+    /* Store word name */
+    spec->word_name = strdup(word_name);
+    if (!spec->word_name) {
+        return false;
+    }
+
+    /* Store input types */
+    spec->input_count = input_count;
+    for (int i = 0; i < input_count; i++) {
+        spec->input_types[i] = input_types[i];
+    }
+
+    /* Store CID (copy 32 bytes) */
+    spec->cid = malloc(CID_SIZE);
+    if (!spec->cid) {
+        free(spec->word_name);
+        return false;
+    }
+    memcpy(spec->cid, cid, CID_SIZE);
+
+    comp->specialization_count++;
+
+    if (comp->verbose) {
+        printf("  Cached specialization #%d: %s with %d input types\n",
+               comp->specialization_count, word_name, input_count);
+    }
+
+    return true;
+}
+
 /* Free compiler */
 void compiler_free(compiler_t* comp) {
     if (comp) {
@@ -158,6 +234,11 @@ void compiler_free(compiler_t* comp) {
         /* Free word definitions */
         for (int i = 0; i < comp->word_def_count; i++) {
             word_definition_free(comp->word_defs[i]);
+        }
+        /* Free specialization cache */
+        for (int i = 0; i < comp->specialization_count; i++) {
+            free(comp->specializations[i].word_name);
+            free(comp->specializations[i].cid);
         }
         free(comp);
     }
@@ -543,60 +624,81 @@ static bool compile_word(compiler_t* comp, const char* name) {
             concrete_inputs[i] = comp->type_stack[start_idx + i].type;
         }
 
-        /* Compile the word with concrete types */
-        blob_buffer_t* compiled_blob = word_compile_with_context(comp, entry->word_def,
-                                                                  concrete_inputs, input_count);
-        if (!compiled_blob) {
-            fprintf(stderr, "Failed to compile word '%s' with concrete types\n", name);
-            return false;
-        }
+        /* Phase 3: Check specialization cache */
+        unsigned char* cached_cid = specialization_lookup(comp, name, concrete_inputs, input_count);
 
-        /* TODO Phase 3: Cache the compiled specialization by (name, concrete_types) */
-
-        /* Store the compiled blob in database */
-        /* Build type signature string for this specialization */
-        char type_sig_str[256];
-        char *p = type_sig_str;
-        for (int i = 0; i < input_count; i++) {
-            switch (concrete_inputs[i]) {
-                case TYPE_I64: p += sprintf(p, "i64 "); break;
-                case TYPE_U64: p += sprintf(p, "u64 "); break;
-                case TYPE_F64: p += sprintf(p, "f64 "); break;
-                case TYPE_PTR: p += sprintf(p, "ptr "); break;
-                case TYPE_BOOL: p += sprintf(p, "bool "); break;
-                case TYPE_STR: p += sprintf(p, "str "); break;
-                default: p += sprintf(p, "? "); break;
+        unsigned char* cid;
+        if (cached_cid) {
+            /* Cache hit! Reuse existing specialization */
+            if (comp->verbose) {
+                printf("  Cache HIT: Reusing specialization of '%s'\n", name);
             }
-        }
-        p += sprintf(p, "-> ");
-        for (int i = 0; i < comp->type_stack_depth; i++) {
-            type_id_t t = comp->type_stack[i].type;
-            switch (t) {
-                case TYPE_I64: p += sprintf(p, "i64 "); break;
-                case TYPE_U64: p += sprintf(p, "u64 "); break;
-                case TYPE_F64: p += sprintf(p, "f64 "); break;
-                case TYPE_PTR: p += sprintf(p, "ptr "); break;
-                case TYPE_BOOL: p += sprintf(p, "bool "); break;
-                case TYPE_STR: p += sprintf(p, "str "); break;
-                default: p += sprintf(p, "? "); break;
+            cid = malloc(CID_SIZE);
+            if (!cid) {
+                return false;
             }
-        }
+            memcpy(cid, cached_cid, CID_SIZE);
+        } else {
+            /* Cache miss - compile the word with concrete types */
+            if (comp->verbose) {
+                printf("  Cache MISS: Compiling specialization of '%s'\n", name);
+            }
 
-        unsigned char* sig_cid = db_store_type_sig(comp->db, NULL, type_sig_str);
-        if (!sig_cid) {
-            fprintf(stderr, "Failed to store type signature for specialization\n");
+            blob_buffer_t* compiled_blob = word_compile_with_context(comp, entry->word_def,
+                                                                      concrete_inputs, input_count);
+            if (!compiled_blob) {
+                fprintf(stderr, "Failed to compile word '%s' with concrete types\n", name);
+                return false;
+            }
+
+            /* Store the compiled blob in database */
+            /* Build type signature string for this specialization */
+            char type_sig_str[256];
+            char *p = type_sig_str;
+            for (int i = 0; i < input_count; i++) {
+                switch (concrete_inputs[i]) {
+                    case TYPE_I64: p += sprintf(p, "i64 "); break;
+                    case TYPE_U64: p += sprintf(p, "u64 "); break;
+                    case TYPE_F64: p += sprintf(p, "f64 "); break;
+                    case TYPE_PTR: p += sprintf(p, "ptr "); break;
+                    case TYPE_BOOL: p += sprintf(p, "bool "); break;
+                    case TYPE_STR: p += sprintf(p, "str "); break;
+                    default: p += sprintf(p, "? "); break;
+                }
+            }
+            p += sprintf(p, "-> ");
+            for (int i = 0; i < comp->type_stack_depth; i++) {
+                type_id_t t = comp->type_stack[i].type;
+                switch (t) {
+                    case TYPE_I64: p += sprintf(p, "i64 "); break;
+                    case TYPE_U64: p += sprintf(p, "u64 "); break;
+                    case TYPE_F64: p += sprintf(p, "f64 "); break;
+                    case TYPE_PTR: p += sprintf(p, "ptr "); break;
+                    case TYPE_BOOL: p += sprintf(p, "bool "); break;
+                    case TYPE_STR: p += sprintf(p, "str "); break;
+                    default: p += sprintf(p, "? "); break;
+                }
+            }
+
+            unsigned char* sig_cid = db_store_type_sig(comp->db, NULL, type_sig_str);
+            if (!sig_cid) {
+                fprintf(stderr, "Failed to store type signature for specialization\n");
+                blob_buffer_free(compiled_blob);
+                return false;
+            }
+
+            cid = db_store_blob(comp->db, BLOB_WORD, sig_cid,
+                                compiled_blob->data, compiled_blob->size);
+            free(sig_cid);
             blob_buffer_free(compiled_blob);
-            return false;
-        }
 
-        unsigned char* cid = db_store_blob(comp->db, BLOB_WORD, sig_cid,
-                                           compiled_blob->data, compiled_blob->size);
-        free(sig_cid);
-        blob_buffer_free(compiled_blob);
+            if (!cid) {
+                fprintf(stderr, "Failed to store compiled specialization\n");
+                return false;
+            }
 
-        if (!cid) {
-            fprintf(stderr, "Failed to store compiled specialization\n");
-            return false;
+            /* Phase 3: Store in specialization cache for future reuse */
+            specialization_store(comp, name, concrete_inputs, input_count, cid);
         }
 
         /* Apply type signature to update type stack */
