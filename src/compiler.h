@@ -17,6 +17,12 @@
 /* Maximum pending quotation references in a single word */
 #define MAX_QUOT_REFS 64
 
+/* Maximum allocation slots per word */
+#define MAX_SLOTS 256
+
+/* Maximum cached word definitions */
+#define MAX_WORD_DEFS 256
+
 /* Quotation kind */
 typedef enum {
     QUOT_LITERAL,  /* Lexical - uncompiled tokens, compile at use site */
@@ -43,15 +49,28 @@ typedef struct {
     int output_count;
 } quotation_t;
 
+/* Word definition (stored form) - words are named quotations */
+typedef struct {
+    char* name;
+    token_t* tokens;               /* Array of definition tokens */
+    int token_count;
+    int token_capacity;
+    type_sig_t* type_sig;          /* Optional explicit type signature */
+} word_definition_t;
+
 /* Compiler state */
 typedef struct compiler {
     dictionary_t* dict;
     march_db_t* db;
-    type_id_t type_stack[MAX_TYPE_STACK];
+    type_stack_entry_t type_stack[MAX_TYPE_STACK];
     int type_stack_depth;
     cell_buffer_t* cells;          /* Legacy: runtime cells (deprecated) */
     blob_buffer_t* blob;           /* CID-based blob encoding (LINKING.md) */
     bool verbose;
+
+    /* Compile-time slot allocation (like register allocation for heap ptrs) */
+    bool slot_used[MAX_SLOTS];        /* Which slots are currently in use */
+    int slot_count;                   /* Number of slots allocated (peak usage) */
 
     /* Type signature for next word definition (from $ declaration) */
     type_sig_t* pending_type_sig;
@@ -74,6 +93,11 @@ typedef struct compiler {
     /* Pending quotation CID references (for linking) */
     unsigned char* pending_quot_cids[MAX_QUOT_REFS];
     int pending_quot_count;
+
+    /* Word definition cache (compile-time only) */
+    /* Words are named quotations - stored as tokens, compiled at call site */
+    word_definition_t* word_defs[MAX_WORD_DEFS];
+    int word_def_count;
 } compiler_t;
 
 /* Create/free compiler */

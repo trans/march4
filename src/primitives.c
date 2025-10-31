@@ -56,6 +56,7 @@ void* primitive_dispatch_table[256] = {
     [PRIM_0BRANCH]  = &op_0branch,
     [PRIM_EXECUTE]  = &op_execute,
     [PRIM_I0]       = &op_i0,
+    [PRIM_FREE]     = &op_free,
 };
 
 /* ============================================================================ */
@@ -134,6 +135,9 @@ void register_primitives(dictionary_t* dict) {
 
     /* Quotation execution - polymorphic ptr */
     REG_PRIM("execute", PRIM_EXECUTE, op_execute, "a ->");
+
+    /* Memory management */
+    REG_PRIM("free", PRIM_FREE, op_free, "i64 ->");
 }
 
 #undef REG_PRIM

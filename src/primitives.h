@@ -72,6 +72,9 @@ extern void op_i0(void);
 /* Quotation execution */
 extern void op_execute(void);
 
+/* Memory management */
+extern void op_free(void);
+
 /* ============================================================================ */
 /* Primitive Dispatch Table */
 /* ============================================================================ */

@@ -76,6 +76,7 @@
 #define PRIM_0BRANCH    41   /* 0branch */
 #define PRIM_EXECUTE    42   /* execute */
 #define PRIM_I0         43   /* i0 - loop counter */
+#define PRIM_FREE       44   /* free - deallocate slot */
 
 /* Cell type */
 typedef uint64_t cell_t;
@@ -102,7 +103,7 @@ typedef enum {
 /* Type stack entry (compile-time only) */
 typedef struct {
     type_id_t type;
-    int depth;  /* For debugging */
+    int slot_id;  /* -1 = not heap-allocated, >=0 = slot index for heap pointer */
 } type_stack_entry_t;
 
 /* Maximum sizes */

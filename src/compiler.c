@@ -22,6 +22,13 @@ static bool compile_true(compiler_t* comp);
 static bool compile_false(compiler_t* comp);
 static bool materialize_quotations(compiler_t* comp);
 
+/* Stack primitive immediate handlers */
+static bool compile_drop(compiler_t* comp);
+static bool compile_dup(compiler_t* comp);
+static bool compile_swap(compiler_t* comp);
+static bool compile_over(compiler_t* comp);
+static bool compile_rot(compiler_t* comp);
+
 /* Create compiler */
 compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     compiler_t* comp = malloc(sizeof(compiler_t));
@@ -39,6 +46,13 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     comp->blob_stack_depth = 0;
     comp->quot_counter = 0;
     comp->pending_quot_count = 0;
+    comp->word_def_count = 0;
+
+    /* Initialize slot allocation */
+    comp->slot_count = 0;
+    for (int i = 0; i < MAX_SLOTS; i++) {
+        comp->slot_used[i] = false;
+    }
 
     if (!comp->cells || !comp->blob) {
         if (comp->cells) cell_buffer_free(comp->cells);
@@ -48,6 +62,82 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     }
 
     return comp;
+}
+
+/* Free word definition */
+static void word_definition_free(word_definition_t* def) {
+    if (def) {
+        free(def->name);
+        /* Free tokens */
+        if (def->tokens) {
+            for (int i = 0; i < def->token_count; i++) {
+                if (def->tokens[i].text) {
+                    free(def->tokens[i].text);
+                }
+            }
+            free(def->tokens);
+        }
+        if (def->type_sig) {
+            free(def->type_sig);
+        }
+        free(def);
+    }
+}
+
+/* Create word definition */
+static word_definition_t* word_definition_create(const char* name) {
+    word_definition_t* def = malloc(sizeof(word_definition_t));
+    if (!def) return NULL;
+
+    def->name = strdup(name);
+    def->token_capacity = 16;
+    def->token_count = 0;
+    def->tokens = malloc(sizeof(token_t) * def->token_capacity);
+    def->type_sig = NULL;
+
+    if (!def->name || !def->tokens) {
+        word_definition_free(def);
+        return NULL;
+    }
+
+    return def;
+}
+
+/* Append token to word definition */
+static bool word_def_append_token(word_definition_t* def, const token_t* tok) {
+    /* Grow array if needed */
+    if (def->token_count >= def->token_capacity) {
+        int new_capacity = def->token_capacity * 2;
+        token_t* new_tokens = realloc(def->tokens, sizeof(token_t) * new_capacity);
+        if (!new_tokens) {
+            fprintf(stderr, "Failed to grow word definition token array\n");
+            return false;
+        }
+        def->tokens = new_tokens;
+        def->token_capacity = new_capacity;
+    }
+
+    /* Deep copy the token */
+    def->tokens[def->token_count] = *tok;
+    if (tok->text) {
+        def->tokens[def->token_count].text = strdup(tok->text);
+        if (!def->tokens[def->token_count].text) {
+            return false;
+        }
+    }
+
+    def->token_count++;
+    return true;
+}
+
+/* Find word definition in cache */
+static word_definition_t* find_word_definition(compiler_t* comp, const char* name) {
+    for (int i = 0; i < comp->word_def_count; i++) {
+        if (strcmp(comp->word_defs[i]->name, name) == 0) {
+            return comp->word_defs[i];
+        }
+    }
+    return NULL;
 }
 
 /* Free compiler */
@@ -62,6 +152,10 @@ void compiler_free(compiler_t* comp) {
         /* Free pending quotation CIDs */
         for (int i = 0; i < comp->pending_quot_count; i++) {
             free(comp->pending_quot_cids[i]);
+        }
+        /* Free word definitions */
+        for (int i = 0; i < comp->word_def_count; i++) {
+            word_definition_free(comp->word_defs[i]);
         }
         free(comp);
     }
@@ -101,16 +195,93 @@ void compiler_register_primitives(compiler_t* comp) {
     dict_add(comp->dict, "times", NULL, NULL, 0, &sig, false, true,
              (immediate_handler_t)compile_times_dispatch);
 
+    /* Stack manipulation primitives with compile-time RC tracking */
+    /* These override the runtime primitives registered by register_primitives() */
+
+    /* drop: ( a -- ) */
+    parse_type_sig("a ->", &sig);
+    dict_add(comp->dict, "drop", NULL, NULL, 0, &sig, false, true,
+             (immediate_handler_t)compile_drop);
+
+    /* dup: ( a -- a a ) */
+    parse_type_sig("a -> a a", &sig);
+    dict_add(comp->dict, "dup", NULL, NULL, 0, &sig, false, true,
+             (immediate_handler_t)compile_dup);
+
+    /* swap: ( a b -- b a ) */
+    parse_type_sig("a b -> b a", &sig);
+    dict_add(comp->dict, "swap", NULL, NULL, 0, &sig, false, true,
+             (immediate_handler_t)compile_swap);
+
+    /* over: ( a b -- a b a ) */
+    parse_type_sig("a b -> a b a", &sig);
+    dict_add(comp->dict, "over", NULL, NULL, 0, &sig, false, true,
+             (immediate_handler_t)compile_over);
+
+    /* rot: ( a b c -- b c a ) */
+    parse_type_sig("a b c -> b c a", &sig);
+    dict_add(comp->dict, "rot", NULL, NULL, 0, &sig, false, true,
+             (immediate_handler_t)compile_rot);
+
     debug_dump_dict_stats(comp->dict);
 }
 
-/* Push type onto type stack */
+/* Check if a type is heap-allocated */
+static bool type_is_heap(type_id_t type) {
+    return type == TYPE_STR;  /* Add TYPE_BUF when buffers are implemented */
+}
+
+/* Push type onto type stack (non-heap value) */
 static void push_type(compiler_t* comp, type_id_t type) {
     if (comp->type_stack_depth >= MAX_TYPE_STACK) {
         fprintf(stderr, "Type stack overflow\n");
         return;
     }
-    comp->type_stack[comp->type_stack_depth++] = type;
+    comp->type_stack[comp->type_stack_depth].type = type;
+    comp->type_stack[comp->type_stack_depth].slot_id = -1;  /* Not heap-allocated */
+    comp->type_stack_depth++;
+}
+
+/* Allocate a slot for heap allocation tracking */
+static int allocate_slot(compiler_t* comp) {
+    /* Find first free slot */
+    for (int i = 0; i < MAX_SLOTS; i++) {
+        if (!comp->slot_used[i]) {
+            comp->slot_used[i] = true;
+            if (i >= comp->slot_count) {
+                comp->slot_count = i + 1;  /* Track peak usage */
+            }
+            return i;
+        }
+    }
+    fprintf(stderr, "Error: Too many allocation slots (max %d)\n", MAX_SLOTS);
+    return -1;
+}
+
+/* Free a slot (mark as available for reuse) */
+static void free_slot(compiler_t* comp, int slot_id) {
+    if (slot_id >= 0 && slot_id < MAX_SLOTS) {
+        comp->slot_used[slot_id] = false;
+    }
+}
+
+/* Push heap-allocated value onto type stack */
+static void push_heap_value(compiler_t* comp, type_id_t type) {
+    if (comp->type_stack_depth >= MAX_TYPE_STACK) {
+        fprintf(stderr, "Type stack overflow\n");
+        return;
+    }
+
+    int slot_id = allocate_slot(comp);
+    if (slot_id < 0) return;  /* Error already printed */
+
+    comp->type_stack[comp->type_stack_depth].type = type;
+    comp->type_stack[comp->type_stack_depth].slot_id = slot_id;
+    comp->type_stack_depth++;
+
+    if (comp->verbose) {
+        printf("  ALLOC slot=%d type=%d\n", slot_id, type);
+    }
 }
 
 /* Pop type from type stack */
@@ -119,8 +290,24 @@ static type_id_t pop_type(compiler_t* comp) {
         fprintf(stderr, "Type stack underflow\n");
         return TYPE_ANY;
     }
+    comp->type_stack_depth--;
+    return comp->type_stack[comp->type_stack_depth].type;
+}
+
+/* Pop type stack entry (with slot tracking) */
+static type_stack_entry_t pop_type_entry(compiler_t* comp) {
+    if (comp->type_stack_depth == 0) {
+        fprintf(stderr, "Type stack underflow\n");
+        type_stack_entry_t entry = {TYPE_ANY, -1};
+        return entry;
+    }
     return comp->type_stack[--comp->type_stack_depth];
 }
+
+/* Note: In slot-based model, we don't need consume_value or duplicate_value.
+ * Stack primitives just copy/remove slot_ids on the type stack.
+ * Slots are only freed at word end if they're not on the return stack.
+ */
 
 /* Apply word's type signature to type stack */
 static bool apply_signature(compiler_t* comp, type_sig_t* sig) {
@@ -141,13 +328,17 @@ static bool apply_signature(compiler_t* comp, type_sig_t* sig) {
     type_id_t input_types[MAX_TYPE_STACK];
     for (int i = 0; i < sig->input_count; i++) {
         int stack_pos = comp->type_stack_depth - sig->input_count + i;
-        input_types[i] = comp->type_stack[stack_pos];
+        input_types[i] = comp->type_stack[stack_pos].type;
     }
 
     /* Pop inputs and verify types, binding type variables */
     for (int i = sig->input_count - 1; i >= 0; i--) {
         type_id_t expected = sig->inputs[i];
-        type_id_t actual = pop_type(comp);
+        type_stack_entry_t entry = pop_type_entry(comp);
+        type_id_t actual = entry.type;
+
+        /* Note: In slot model, we don't consume values here.
+         * Slots stay allocated until word end. */
 
         /* Handle type variables */
         if (expected >= TYPE_VAR_A && expected <= TYPE_VAR_Z) {
@@ -241,8 +432,8 @@ static bool compile_string(compiler_t* comp, const char* str) {
     encode_cid_ref(comp->blob, BLOB_DATA, cid);
     free(cid);
 
-    /* Push str type (string reference) */
-    push_type(comp, TYPE_STR);
+    /* Push str type (string reference) - heap allocated */
+    push_heap_value(comp, TYPE_STR);
 
     if (comp->verbose) {
         printf("  STR \"%s\" → str\n", str);
@@ -296,9 +487,15 @@ static bool compile_word(compiler_t* comp, const char* name) {
     fprintf(stderr, "TRACE: Doing type-aware lookup for '%s'\n", name);
     fflush(stderr);
 
+    /* Extract types for type-aware lookup */
+    type_id_t types[MAX_TYPE_STACK];
+    for (int i = 0; i < comp->type_stack_depth; i++) {
+        types[i] = comp->type_stack[i].type;
+    }
+
     /* Do type-aware lookup for overload resolution (works for both immediate and regular) */
     entry = dict_lookup_typed(comp->dict, name,
-                             comp->type_stack,
+                             types,
                              comp->type_stack_depth);
 
     fprintf(stderr, "TRACE: Type-aware lookup result: %s\n", entry ? "found" : "not found");
@@ -433,7 +630,7 @@ static bool quot_compile_with_context(
     cell_buffer_t* saved_cells = comp->cells;
     blob_buffer_t* saved_blob = comp->blob;
     int saved_type_depth = comp->type_stack_depth;
-    type_id_t saved_type_stack[MAX_TYPE_STACK];
+    type_stack_entry_t saved_type_stack[MAX_TYPE_STACK];
     for (int i = 0; i < saved_type_depth; i++) {
         saved_type_stack[i] = comp->type_stack[i];
     }
@@ -443,7 +640,9 @@ static bool quot_compile_with_context(
     comp->blob = quot->blob;
     comp->type_stack_depth = type_stack_depth;
     for (int i = 0; i < type_stack_depth; i++) {
-        comp->type_stack[i] = type_stack[i];
+        /* Convert type_id_t input to type_stack_entry_t (no heap tracking for inputs) */
+        comp->type_stack[i].type = type_stack[i];
+        comp->type_stack[i].slot_id = -1;
     }
 
     /* Compile each token */
@@ -479,7 +678,7 @@ static bool quot_compile_with_context(
         /* Capture output types */
         quot->output_count = comp->type_stack_depth;
         for (int i = 0; i < comp->type_stack_depth; i++) {
-            quot->outputs[i] = comp->type_stack[i];
+            quot->outputs[i] = comp->type_stack[i].type;
         }
 
         /* Mark as compiled (upgrade to QUOT_TYPED) */
@@ -542,7 +741,7 @@ static bool compile_lparen(compiler_t* comp) {
     /* Capture current type stack as quotation inputs */
     quot->input_count = comp->type_stack_depth;
     for (int i = 0; i < comp->type_stack_depth; i++) {
-        quot->inputs[i] = comp->type_stack[i];
+        quot->inputs[i] = comp->type_stack[i].type;
     }
 
     /* Output types unknown until compilation at use site */
@@ -589,7 +788,8 @@ static bool compile_rparen(compiler_t* comp) {
         /* Restore type stack to pre-quotation state */
         comp->type_stack_depth = quot->input_count;
         for (int i = 0; i < quot->input_count; i++) {
-            comp->type_stack[i] = quot->inputs[i];
+            comp->type_stack[i].type = quot->inputs[i];
+            comp->type_stack[i].slot_id = -1;
         }
 
         if (comp->verbose) {
@@ -603,7 +803,7 @@ static bool compile_rparen(compiler_t* comp) {
         /* Capture output types */
         quot->output_count = comp->type_stack_depth;
         for (int i = 0; i < comp->type_stack_depth; i++) {
-            quot->outputs[i] = comp->type_stack[i];
+            quot->outputs[i] = comp->type_stack[i].type;
         }
 
         /* Restore parent buffers */
@@ -613,7 +813,8 @@ static bool compile_rparen(compiler_t* comp) {
         /* Restore type stack (quotation inputs + outputs become new stack) */
         comp->type_stack_depth = quot->input_count;
         for (int i = 0; i < quot->input_count; i++) {
-            comp->type_stack[i] = quot->inputs[i];
+            comp->type_stack[i].type = quot->inputs[i];
+            comp->type_stack[i].slot_id = -1;
         }
 
         if (comp->verbose) {
@@ -653,7 +854,8 @@ static bool materialize_quotations(compiler_t* comp) {
             if (comp->verbose) {
                 printf("  Materializing QUOT_LITERAL: compiling with empty context\n");
             }
-            if (!quot_compile_with_context(comp, quot, comp->type_stack, 0)) {
+            /* Empty context - no types needed */
+            if (!quot_compile_with_context(comp, quot, NULL, 0)) {
                 fprintf(stderr, "Failed to compile QUOT_LITERAL for materialization\n");
                 return false;
             }
@@ -806,7 +1008,12 @@ static bool compile_times(compiler_t* comp) {
 
     /* Compile QUOT_LITERAL quotation with current type context (after popping count) */
     if (body_quot->kind == QUOT_LITERAL) {
-        if (!quot_compile_with_context(comp, body_quot, comp->type_stack, comp->type_stack_depth)) {
+        /* Extract types for compilation context */
+        type_id_t types[MAX_TYPE_STACK];
+        for (int i = 0; i < comp->type_stack_depth; i++) {
+            types[i] = comp->type_stack[i].type;
+        }
+        if (!quot_compile_with_context(comp, body_quot, types, comp->type_stack_depth)) {
             fprintf(stderr, "Failed to compile body quotation with context\n");
             return false;
         }
@@ -949,16 +1156,22 @@ static bool compile_times_until(compiler_t* comp) {
         return false;
     }
 
+    /* Extract types for compilation context */
+    type_id_t types[MAX_TYPE_STACK];
+    for (int i = 0; i < comp->type_stack_depth; i++) {
+        types[i] = comp->type_stack[i].type;
+    }
+
     /* Compile QUOT_LITERAL quotations with current type context */
     if (cond_quot->kind == QUOT_LITERAL) {
-        if (!quot_compile_with_context(comp, cond_quot, comp->type_stack, comp->type_stack_depth)) {
+        if (!quot_compile_with_context(comp, cond_quot, types, comp->type_stack_depth)) {
             fprintf(stderr, "Failed to compile condition quotation with context\n");
             return false;
         }
     }
 
     if (body_quot->kind == QUOT_LITERAL) {
-        if (!quot_compile_with_context(comp, body_quot, comp->type_stack, comp->type_stack_depth)) {
+        if (!quot_compile_with_context(comp, body_quot, types, comp->type_stack_depth)) {
             fprintf(stderr, "Failed to compile body quotation with context\n");
             return false;
         }
@@ -1068,16 +1281,22 @@ static bool compile_if(compiler_t* comp) {
     /* Pop flag type */
     pop_type(comp);
 
+    /* Extract types for compilation context */
+    type_id_t types[MAX_TYPE_STACK];
+    for (int i = 0; i < comp->type_stack_depth; i++) {
+        types[i] = comp->type_stack[i].type;
+    }
+
     /* Compile QUOT_LITERAL quotations with current type context (after popping flag) */
     if (true_quot->kind == QUOT_LITERAL) {
-        if (!quot_compile_with_context(comp, true_quot, comp->type_stack, comp->type_stack_depth)) {
+        if (!quot_compile_with_context(comp, true_quot, types, comp->type_stack_depth)) {
             fprintf(stderr, "Failed to compile true quotation with context\n");
             return false;
         }
     }
 
     if (false_quot->kind == QUOT_LITERAL) {
-        if (!quot_compile_with_context(comp, false_quot, comp->type_stack, comp->type_stack_depth)) {
+        if (!quot_compile_with_context(comp, false_quot, types, comp->type_stack_depth)) {
             fprintf(stderr, "Failed to compile false quotation with context\n");
             return false;
         }
@@ -1224,6 +1443,204 @@ static bool compile_false(compiler_t* comp) {
 
     if (comp->verbose) {
         printf("  LIT 0 (false)\n");
+    }
+
+    return true;
+}
+
+/* ============================================================================
+ * Stack Primitive Immediate Handlers
+ *
+ * These implement compile-time reference counting for stack manipulation.
+ * Structure mirrors future March self-hosted implementation.
+ * ============================================================================ */
+
+/* March equivalent:
+ * : drop immediate ( -- )
+ *   ct-stack-pop           \ Pop compile-time stack entry
+ *   dup .alloc-id @ ?dup if
+ *     ( heap allocated )
+ *     ct-rc-dec            \ Decrement refcount
+ *     0= if emit-drop.free else emit-drop.raw then
+ *   else
+ *     ( not heap )
+ *     drop emit-drop.raw
+ *   then ;
+ */
+static bool compile_drop(compiler_t* comp) {
+    if (comp->type_stack_depth < 1) {
+        fprintf(stderr, "drop: stack underflow\n");
+        return false;
+    }
+
+    /* Pop compile-time stack entry (just removes from type stack) */
+    pop_type_entry(comp);
+
+    /* Note: In slot model, we don't free here. Slots stay allocated
+     * until word end and are freed if not returned. */
+
+    /* Emit runtime drop */
+    dict_entry_t* drop_prim = dict_lookup(comp->dict, "drop");
+    if (!drop_prim) {
+        fprintf(stderr, "Error: drop primitive not found\n");
+        return false;
+    }
+
+    cell_buffer_append(comp->cells, encode_xt(drop_prim->addr));
+    encode_primitive(comp->blob, drop_prim->prim_id);
+
+    if (comp->verbose) {
+        printf("  XT drop\n");
+    }
+
+    return true;
+}
+
+/* March equivalent:
+ * : dup immediate ( -- )
+ *   ct-stack-top dup ct-stack-push  \ Duplicate entry on CT stack (incl slot_id)
+ *   emit-dup.raw ;
+ */
+static bool compile_dup(compiler_t* comp) {
+    if (comp->type_stack_depth < 1) {
+        fprintf(stderr, "dup: stack underflow\n");
+        return false;
+    }
+
+    /* Get top entry and duplicate it (including slot_id) */
+    type_stack_entry_t top = comp->type_stack[comp->type_stack_depth - 1];
+
+    if (comp->type_stack_depth >= MAX_TYPE_STACK) {
+        fprintf(stderr, "Type stack overflow\n");
+        return false;
+    }
+    comp->type_stack[comp->type_stack_depth] = top;  /* Copy entire entry */
+    comp->type_stack_depth++;
+
+    /* Emit runtime dup */
+    dict_entry_t* dup_prim = dict_lookup(comp->dict, "dup");
+    if (!dup_prim) {
+        fprintf(stderr, "Error: dup primitive not found\n");
+        return false;
+    }
+
+    cell_buffer_append(comp->cells, encode_xt(dup_prim->addr));
+    encode_primitive(comp->blob, dup_prim->prim_id);
+
+    if (comp->verbose) {
+        printf("  XT dup\n");
+    }
+
+    return true;
+}
+
+/* March equivalent:
+ * : swap immediate ( -- )
+ *   ct-stack-pop ct-stack-pop  \ Pop b, then a
+ *   swap ct-stack-push ct-stack-push  \ Push b, then a (swapped)
+ *   emit-swap.raw ;
+ */
+static bool compile_swap(compiler_t* comp) {
+    if (comp->type_stack_depth < 2) {
+        fprintf(stderr, "swap: stack underflow\n");
+        return false;
+    }
+
+    /* Swap top two entries (preserves slot_ids) */
+    type_stack_entry_t top = comp->type_stack[comp->type_stack_depth - 1];
+    type_stack_entry_t second = comp->type_stack[comp->type_stack_depth - 2];
+
+    comp->type_stack[comp->type_stack_depth - 2] = top;
+    comp->type_stack[comp->type_stack_depth - 1] = second;
+
+    /* Emit runtime swap */
+    dict_entry_t* swap_prim = dict_lookup(comp->dict, "swap");
+    if (!swap_prim) {
+        fprintf(stderr, "Error: swap primitive not found\n");
+        return false;
+    }
+
+    cell_buffer_append(comp->cells, encode_xt(swap_prim->addr));
+    encode_primitive(comp->blob, swap_prim->prim_id);
+
+    if (comp->verbose) {
+        printf("  XT swap\n");
+    }
+
+    return true;
+}
+
+/* March equivalent:
+ * : over immediate ( -- )
+ *   ct-stack-second dup ct-stack-push  \ Push copy of second entry (incl slot_id)
+ *   emit-over.raw ;
+ */
+static bool compile_over(compiler_t* comp) {
+    if (comp->type_stack_depth < 2) {
+        fprintf(stderr, "over: stack underflow\n");
+        return false;
+    }
+
+    /* Get second entry and push copy (including slot_id) */
+    type_stack_entry_t second = comp->type_stack[comp->type_stack_depth - 2];
+
+    if (comp->type_stack_depth >= MAX_TYPE_STACK) {
+        fprintf(stderr, "Type stack overflow\n");
+        return false;
+    }
+    comp->type_stack[comp->type_stack_depth] = second;  /* Copy entire entry */
+    comp->type_stack_depth++;
+
+    /* Emit runtime over */
+    dict_entry_t* over_prim = dict_lookup(comp->dict, "over");
+    if (!over_prim) {
+        fprintf(stderr, "Error: over primitive not found\n");
+        return false;
+    }
+
+    cell_buffer_append(comp->cells, encode_xt(over_prim->addr));
+    encode_primitive(comp->blob, over_prim->prim_id);
+
+    if (comp->verbose) {
+        printf("  XT over\n");
+    }
+
+    return true;
+}
+
+/* March equivalent:
+ * : rot immediate ( -- )
+ *   ct-stack-pop ct-stack-pop ct-stack-pop  \ c b a
+ *   swap rot ct-stack-push ct-stack-push ct-stack-push  \ b c a
+ *   emit-rot.raw ;
+ */
+static bool compile_rot(compiler_t* comp) {
+    if (comp->type_stack_depth < 3) {
+        fprintf(stderr, "rot: stack underflow\n");
+        return false;
+    }
+
+    /* Rotate top three entries: ( a b c -- b c a ) */
+    type_stack_entry_t c = comp->type_stack[comp->type_stack_depth - 1];
+    type_stack_entry_t b = comp->type_stack[comp->type_stack_depth - 2];
+    type_stack_entry_t a = comp->type_stack[comp->type_stack_depth - 3];
+
+    comp->type_stack[comp->type_stack_depth - 3] = b;
+    comp->type_stack[comp->type_stack_depth - 2] = c;
+    comp->type_stack[comp->type_stack_depth - 1] = a;
+
+    /* Emit runtime rot */
+    dict_entry_t* rot_prim = dict_lookup(comp->dict, "rot");
+    if (!rot_prim) {
+        fprintf(stderr, "Error: rot primitive not found\n");
+        return false;
+    }
+
+    cell_buffer_append(comp->cells, encode_xt(rot_prim->addr));
+    encode_primitive(comp->blob, rot_prim->prim_id);
+
+    if (comp->verbose) {
+        printf("  XT rot\n");
     }
 
     return true;
@@ -1418,6 +1835,36 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
         }
     }
 
+    /* Emit FREE for non-returned slots (slot-based memory management) */
+    /* Collect slot_ids being returned */
+    bool returned_slots[MAX_SLOTS] = {false};
+    for (int i = 0; i < comp->type_stack_depth; i++) {
+        int slot_id = comp->type_stack[i].slot_id;
+        if (slot_id >= 0 && slot_id < MAX_SLOTS) {
+            returned_slots[slot_id] = true;
+        }
+    }
+
+    /* Emit FREE for allocated slots that aren't returned */
+    dict_entry_t* free_prim = dict_lookup(comp->dict, "free");
+    for (int slot_id = 0; slot_id < comp->slot_count; slot_id++) {
+        if (comp->slot_used[slot_id] && !returned_slots[slot_id]) {
+            /* This slot was allocated but not returned - free it */
+            if (comp->verbose) {
+                printf("  FREE slot=%d (not returned)\n", slot_id);
+            }
+
+            /* Emit: push slot_id, call free */
+            cell_buffer_append(comp->cells, encode_lit(slot_id));
+            encode_inline_literal(comp->blob, slot_id);
+
+            if (free_prim) {
+                cell_buffer_append(comp->cells, encode_xt(free_prim->addr));
+                encode_primitive(comp->blob, free_prim->prim_id);
+            }
+        }
+    }
+
     /* Emit EXIT */
     cell_buffer_append(comp->cells, encode_exit());
 
@@ -1428,7 +1875,7 @@ static bool compile_definition(compiler_t* comp, token_stream_t* stream) {
     if (comp->type_stack_depth > 0) {
         strcpy(type_sig, "-> ");
         for (int i = 0; i < comp->type_stack_depth; i++) {
-            type_id_t t = comp->type_stack[i];
+            type_id_t t = comp->type_stack[i].type;
             /* Handle type variables */
             if (t >= TYPE_VAR_A && t <= TYPE_VAR_Z) {
                 char var[3] = {(char)('a' + (t - TYPE_VAR_A)), ' ', '\0'};
