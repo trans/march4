@@ -1,5 +1,45 @@
 # March Language - Working Features Summary
 
+**Current Status (2025-10-30):** Slot-based memory management complete. Core compiler working with 45 primitives, type checking, quotations, conditionals, and loops. Foundation ready for Design B (monomorphization on first use).
+
+---
+
+  ✅ 11. Slot-Based Memory Management - COMPLETE!
+
+  Date: 2025-10-30
+  Status: ✅ Complete
+
+  **Problem:** Reference counting approach broke polymorphic words - immediate handlers (dup, drop) need type context during compilation, but polymorphic word definitions (`: ddup dup dup ;`) have no concrete types.
+
+  **Solution:** Slot-based compile-time allocation tracking with automatic FREE emission.
+
+  **Implementation:**
+  - Type stack now tracks `{type, slot_id}` pairs
+  - Compile-time slot allocator assigns unique IDs to heap allocations
+  - Immediate handlers preserve slot_ids (no refcount arithmetic)
+  - At word end (`;`), emit FREE for allocated slots not on return stack
+  - Simple set-difference logic: `allocated - returned = free`
+
+  **Primitives:**
+  - FREE primitive added (free.asm) - runtime stub, infrastructure TODO
+  - Total: 45 assembly primitives
+
+  **Test Results:**
+  - ✅ `"hello" drop` → allocates slot 0, emits FREE
+  - ✅ `"hello"` (returned) → allocates slot 0, no FREE
+  - ✅ `"keep" "drop" drop` → allocates slots 0,1, FREEs only slot 1
+
+  **Benefits:**
+  - Per-word AOT compilation (no whole-program analysis)
+  - Zero runtime overhead (all analysis at compile time)
+  - Foundation for monomorphization (Design B)
+
+  **Current Limitation:** Polymorphic words require explicit type signatures (e.g., `$ a -> a a a`) to provide type context during independent compilation.
+
+  **Next:** Design B - Store word tokens, compile on first use with concrete types, cache specializations by type signature.
+
+---
+
   ✅ 1. Runtime Layer (Assembly + C)
 
   Location: kernel/x86-64/
