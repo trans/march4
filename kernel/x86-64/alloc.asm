@@ -43,7 +43,6 @@ op_alloc:
     ; Restore VM registers
     pop rsi                 ; Restore DSP
     pop rdi                 ; Restore RSP
-    pop rbx                 ; Restore IP
 
     ; Push pointer result to data stack
     sub rsi, 8              ; Allocate space on stack
