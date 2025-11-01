@@ -60,6 +60,8 @@ void* primitive_dispatch_table[256] = {
     [PRIM_FREE]     = &op_free,
     [PRIM_IDENTITY] = &op_identity,
     [PRIM_MEMCPY]   = &op_memcpy,
+    [PRIM_ARRAY_LEN] = &op_array_length,
+    [PRIM_STR_LEN]  = &op_str_length,
 };
 
 /* ============================================================================ */
@@ -144,6 +146,10 @@ void register_primitives(dictionary_t* dict) {
     REG_PRIM("alloc", PRIM_ALLOC, op_alloc, "i64 -> ptr");
     REG_PRIM("free", PRIM_FREE, op_free, "i64 ->");
     REG_PRIM("memcpy", PRIM_MEMCPY, op_memcpy, "ptr ptr i64 -> ptr");
+
+    /* Array/String operations */
+    REG_PRIM("array-length", PRIM_ARRAY_LEN, op_array_length, "array -> i64");
+    REG_PRIM("str-length", PRIM_STR_LEN, op_str_length, "str -> i64");
 }
 
 #undef REG_PRIM

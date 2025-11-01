@@ -78,6 +78,10 @@ extern void op_alloc(void);
 extern void op_free(void);
 extern void op_memcpy(void);
 
+/* Array/String operations */
+extern void op_array_length(void);
+extern void op_str_length(void);
+
 /* ============================================================================ */
 /* Primitive Dispatch Table */
 /* ============================================================================ */

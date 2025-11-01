@@ -494,91 +494,61 @@ static bool compile_number(compiler_t* comp, int64_t num) {
 
 /* Compile a string literal */
 static bool compile_string(compiler_t* comp, const char* str) {
-    /* Strings are heap-allocated and initialized via memcpy from DB blob */
-    /* Strategy: store string in DB, emit: alloc → load blob addr → memcpy */
+    /* Strings are immutable, stored with 32-byte header in DB, no runtime allocation */
+    /* Layout: [count: u64][elem_size: u8=1][padding: 7][elem_type: u64][reserved: u64][data...] */
 
     size_t str_len = strlen(str) + 1;  /* Include null terminator */
+    size_t total_size = 32 + str_len;
 
-    /* Look up primitives */
-    dict_entry_t* alloc_prim = dict_lookup(comp->dict, "alloc");
-    dict_entry_t* memcpy_prim = dict_lookup(comp->dict, "memcpy");
-    if (!alloc_prim || !memcpy_prim) {
-        fprintf(stderr, "Internal error: ALLOC or MEMCPY primitive not found\n");
+    /* Build buffer with header + data */
+    uint8_t* buffer = calloc(1, total_size);
+    if (!buffer) {
+        fprintf(stderr, "Error: Failed to allocate string buffer\n");
         return false;
     }
+
+    /* Write header fields */
+    uint64_t count = str_len;
+    uint8_t elem_size = 1;
+    uint64_t elem_type = TYPE_I64;  /* Using TYPE_I64 for now, could add TYPE_U8 */
+
+    memcpy(buffer + 0, &count, 8);      /* count at offset 0 */
+    buffer[8] = elem_size;               /* elem_size at offset 8 */
+    memcpy(buffer + 16, &elem_type, 8); /* elem_type at offset 16 */
+    /* reserved bytes at 24-31 remain zero */
+
+    /* Copy string data after header */
+    memcpy(buffer + 32, str, str_len);
 
     /* Store type signature for string (-> str) */
     unsigned char* sig_cid = db_store_type_sig(comp->db, NULL, "str");
     if (!sig_cid) {
         fprintf(stderr, "Error: Failed to store string type signature\n");
+        free(buffer);
         return false;
     }
 
-    /* Store string data as blob in database */
+    /* Store buffer as blob in database */
     unsigned char* str_cid = db_store_blob(comp->db, BLOB_STRING, sig_cid,
-                                           (const uint8_t*)str, str_len);
+                                           buffer, total_size);
     free(sig_cid);
+    free(buffer);
+
     if (!str_cid) {
         fprintf(stderr, "Error: Failed to store string literal in database\n");
         return false;
     }
 
-    /* Emit: size literal */
-    cell_buffer_append(comp->cells, encode_lit(str_len));
-    unsigned char* size_cid = db_store_literal(comp->db, str_len, "i64");
-    if (!size_cid) {
-        fprintf(stderr, "Error: Failed to store string size literal\n");
-        free(str_cid);
-        return false;
-    }
-    encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
-    free(size_cid);
-
-    /* Emit: ALLOC to get destination buffer */
-    cell_buffer_append(comp->cells, encode_xt(alloc_prim->addr));
-    encode_primitive(comp->blob, alloc_prim->prim_id);
-
-    /* Stack now: [dest] */
-
-    /* Emit: CID reference to string blob (will be loaded as source pointer) */
+    /* Emit: CID reference only (loader will cache the blob, return pointer) */
     cell_buffer_append(comp->cells, encode_lit(0));  /* Placeholder for legacy */
     encode_cid_ref(comp->blob, BLOB_DATA, str_cid);
     free(str_cid);
 
-    /* Stack now: [dest src] */
-
-    /* Emit: swap to get src dest */
-    dict_entry_t* swap_prim = dict_lookup(comp->dict, "swap");
-    if (!swap_prim) {
-        fprintf(stderr, "Internal error: SWAP primitive not found\n");
-        return false;
-    }
-    cell_buffer_append(comp->cells, encode_xt(swap_prim->addr));
-    encode_primitive(comp->blob, swap_prim->prim_id);
-
-    /* Stack now: [src dest] */
-
-    /* Emit: length literal for memcpy */
-    cell_buffer_append(comp->cells, encode_lit(str_len));
-    size_cid = db_store_literal(comp->db, str_len, "i64");
-    if (!size_cid) {
-        fprintf(stderr, "Error: Failed to store length literal\n");
-        return false;
-    }
-    encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
-    free(size_cid);
-
-    /* Stack now: [src dest len] */
-
-    /* Emit: MEMCPY (src dest len -> dest) */
-    cell_buffer_append(comp->cells, encode_xt(memcpy_prim->addr));
-    encode_primitive(comp->blob, memcpy_prim->prim_id);
-
-    /* Stack now: [dest] - the string pointer */
+    /* Stack: [str_ptr] - immutable pointer to cached blob */
     push_type(comp, TYPE_STR);
 
     if (comp->verbose) {
-        printf("  STR \"%s\" (%zu bytes) → str [using memcpy]\n", str, str_len);
+        printf("  STR \"%s\" (%zu bytes + 32 header) → str [immutable]\n", str, str_len);
     }
 
     return true;
@@ -1298,34 +1268,48 @@ static bool compile_rbracket(compiler_t* comp) {
 
     /* Handle empty array case */
     if (elem_count == 0) {
-        /* Empty array: just allocate 0 bytes (malloc(0) is implementation-defined but typically returns non-NULL) */
-        /* Actually, let's allocate a minimal 8 bytes to ensure valid pointer */
+        /* Empty array: allocate header (24 bytes) with count=0 */
         dict_entry_t* alloc_prim = dict_lookup(comp->dict, "alloc");
-        if (!alloc_prim) {
-            fprintf(stderr, "Internal error: ALLOC primitive not found\n");
+        dict_entry_t* store_prim = dict_lookup(comp->dict, "!");
+        if (!alloc_prim || !store_prim) {
+            fprintf(stderr, "Internal error: ALLOC or STORE primitive not found\n");
             return false;
         }
 
-        /* Allocate 8 bytes for empty array (ensures valid pointer) */
-        cell_buffer_append(comp->cells, encode_lit(8));
-        unsigned char* size_cid = db_store_literal(comp->db, 8, "i64");
+        /* Allocate 32 bytes for header */
+        cell_buffer_append(comp->cells, encode_lit(32));
+        unsigned char* size_cid = db_store_literal(comp->db, 32, "i64");
         if (!size_cid) {
-            fprintf(stderr, "Error: Failed to store array size literal\n");
+            fprintf(stderr, "Error: Failed to store array header size\n");
             return false;
         }
         encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
         free(size_cid);
 
-        /* Call ALLOC */
+        /* Call ALLOC - stack: [ptr] */
         cell_buffer_append(comp->cells, encode_xt(alloc_prim->addr));
         encode_primitive(comp->blob, alloc_prim->prim_id);
+
+        /* Write header: [count=0][elem_size=8][padding][elem_type=TYPE_ANY] */
+        /* Store count=0 at offset 0 */
+        dict_entry_t* dup_prim = dict_lookup(comp->dict, "dup");
+        if (!dup_prim) return false;
+
+        cell_buffer_append(comp->cells, encode_xt(dup_prim->addr));
+        encode_primitive(comp->blob, dup_prim->prim_id);
+        cell_buffer_append(comp->cells, encode_lit(0));
+        size_cid = db_store_literal(comp->db, 0, "i64");
+        encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
+        free(size_cid);
+        cell_buffer_append(comp->cells, encode_xt(store_prim->addr));
+        encode_primitive(comp->blob, store_prim->prim_id);
 
         /* Update type stack: push array pointer */
         comp->type_stack_depth = marker_depth;
         push_type(comp, TYPE_ARRAY);
 
         if (comp->verbose) {
-            printf("  ] created empty array → array\n");
+            printf("  ] created empty array (32-byte header) → array\n");
         }
 
         return true;
@@ -1360,15 +1344,16 @@ static bool compile_rbracket(compiler_t* comp) {
         return false;
     }
 
-    /* Calculate array size in bytes: elem_count * 8 */
-    int64_t array_size = elem_count * 8;
+    /* Calculate array size in bytes: 32-byte header + elem_count * 8 */
+    int64_t data_size = elem_count * 8;
+    int64_t total_size = 32 + data_size;
 
     /* Emit size literal and ALLOC call */
     /* Legacy: Emit LIT cell */
-    cell_buffer_append(comp->cells, encode_lit(array_size));
+    cell_buffer_append(comp->cells, encode_lit(total_size));
 
     /* CID-based: Store literal and encode reference */
-    unsigned char* size_cid = db_store_literal(comp->db, array_size, "i64");
+    unsigned char* size_cid = db_store_literal(comp->db, total_size, "i64");
     if (!size_cid) {
         fprintf(stderr, "Error: Failed to store array size literal\n");
         return false;
@@ -1381,10 +1366,10 @@ static bool compile_rbracket(compiler_t* comp) {
     encode_primitive(comp->blob, alloc_prim->prim_id);
 
     /* Now we have: elem[0] elem[1] ... elem[n-1] array_ptr on runtime stack */
-    /* Strategy: Move ptr to return stack, store elements in reverse order, restore ptr */
+    /* Strategy: Write header, then move ptr to return stack, store elements, restore ptr */
 
     if (comp->verbose) {
-        printf("    Allocating array: %d elements * 8 = %ld bytes\n", elem_count, array_size);
+        printf("    Allocating array: 32-byte header + %d elements * 8 = %ld bytes\n", elem_count, total_size);
     }
 
     /* Look up return stack primitives */
@@ -1392,11 +1377,62 @@ static bool compile_rbracket(compiler_t* comp) {
     dict_entry_t* fromr_prim = dict_lookup(comp->dict, "r>");
     dict_entry_t* rfetch_prim = dict_lookup(comp->dict, "r@");
     dict_entry_t* add_prim = dict_lookup(comp->dict, "+");
+    dict_entry_t* dup_prim = dict_lookup(comp->dict, "dup");
+    dict_entry_t* cstore_prim = dict_lookup(comp->dict, "c!");
 
-    if (!tor_prim || !fromr_prim || !rfetch_prim || !add_prim) {
-        fprintf(stderr, "Internal error: Return stack primitives not found\n");
+    if (!tor_prim || !fromr_prim || !rfetch_prim || !add_prim || !dup_prim || !cstore_prim) {
+        fprintf(stderr, "Internal error: Primitives not found\n");
         return false;
     }
+
+    /* Write header: [count: u64][elem_size: u8][padding: 7][elem_type: u64][reserved: u64] */
+    /* Stack currently: elem[0] elem[1] ... elem[n-1] ptr */
+
+    /* Write count at offset 0 */
+    cell_buffer_append(comp->cells, encode_xt(dup_prim->addr));
+    encode_primitive(comp->blob, dup_prim->prim_id);
+    cell_buffer_append(comp->cells, encode_lit(elem_count));
+    size_cid = db_store_literal(comp->db, elem_count, "i64");
+    encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
+    free(size_cid);
+    cell_buffer_append(comp->cells, encode_xt(store_prim->addr));
+    encode_primitive(comp->blob, store_prim->prim_id);
+
+    /* Write elem_size=8 at offset 8 using c! */
+    cell_buffer_append(comp->cells, encode_xt(dup_prim->addr));
+    encode_primitive(comp->blob, dup_prim->prim_id);
+    cell_buffer_append(comp->cells, encode_lit(8));
+    size_cid = db_store_literal(comp->db, 8, "i64");
+    encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
+    free(size_cid);
+    cell_buffer_append(comp->cells, encode_xt(add_prim->addr));
+    encode_primitive(comp->blob, add_prim->prim_id);
+    cell_buffer_append(comp->cells, encode_lit(8));
+    size_cid = db_store_literal(comp->db, 8, "i64");
+    encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
+    free(size_cid);
+    dict_entry_t* swap_prim = dict_lookup(comp->dict, "swap");
+    if (!swap_prim) return false;
+    cell_buffer_append(comp->cells, encode_xt(swap_prim->addr));
+    encode_primitive(comp->blob, swap_prim->prim_id);
+    cell_buffer_append(comp->cells, encode_xt(cstore_prim->addr));
+    encode_primitive(comp->blob, cstore_prim->prim_id);
+
+    /* Write elem_type at offset 16 */
+    cell_buffer_append(comp->cells, encode_xt(dup_prim->addr));
+    encode_primitive(comp->blob, dup_prim->prim_id);
+    cell_buffer_append(comp->cells, encode_lit(16));
+    size_cid = db_store_literal(comp->db, 16, "i64");
+    encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
+    free(size_cid);
+    cell_buffer_append(comp->cells, encode_xt(add_prim->addr));
+    encode_primitive(comp->blob, add_prim->prim_id);
+    cell_buffer_append(comp->cells, encode_lit(elem_type));
+    size_cid = db_store_literal(comp->db, elem_type, "i64");
+    encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
+    free(size_cid);
+    cell_buffer_append(comp->cells, encode_xt(store_prim->addr));
+    encode_primitive(comp->blob, store_prim->prim_id);
 
     /* Move array pointer to return stack: >r */
     /* Stack: elem[0] elem[1] ... elem[n-1] */
@@ -1405,9 +1441,9 @@ static bool compile_rbracket(compiler_t* comp) {
     encode_primitive(comp->blob, tor_prim->prim_id);
 
     /* Store each element in reverse order (from TOS down) */
-    /* elem[n-1] is on TOS and should go to offset (n-1)*8 */
+    /* elem[n-1] is on TOS and should go to offset 32 + (n-1)*8 */
     for (int i = elem_count - 1; i >= 0; i--) {
-        int64_t offset = i * 8;
+        int64_t offset = 32 + (i * 8);
 
         /* Fetch array pointer from return stack: r@ */
         /* Stack: elem[0] ... elem[i] ptr */
