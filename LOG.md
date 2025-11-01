@@ -11,6 +11,31 @@
 
 **Status:** ALLOC primitive is complete and functional. Compilation works end-to-end.
 
+**Started implementing array literal syntax `[ ... ]`:**
+
+Implemented the semantic design:
+- `[` places marker on stack, subsequent operations see combined parent+array stack
+- Operations consume from TOS (array items first, then parent)
+- Operations push results to array space
+- `]` collects items, allocates memory, creates array
+
+Completed infrastructure:
+- ✅ Added `TOK_LBRACKET` and `TOK_RBRACKET` token types
+- ✅ Added array marker tracking (`array_marker_stack[]`, `array_marker_depth`)
+- ✅ Implemented `compile_lbracket()` to mark stack boundary
+- ✅ Wired up handlers in compilation pipeline
+- ✅ Tokens parse and capture correctly
+
+Still TODO:
+- ⏳ Implement `compile_rbracket()` code generation:
+  - Detect homogeneous (array) vs heterogeneous (tuple) elements
+  - Generate ALLOC + size calculation
+  - Generate store loop to populate array
+  - Add TYPE_ARRAY to type system
+  - Update type stack with array/tuple type
+
+Example: `[ 1 2 3 ]` currently parses but errors with "not yet fully implemented".
+
 ---
 
 ## 2025-10-31 - Evening
