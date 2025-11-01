@@ -1,6 +1,18 @@
 # March Development Log
 
 
+## 2025-10-31 - Evening Session 2
+
+**Fixed ALLOC primitive:**
+- Removed spurious `pop rbx` instruction that was corrupting the stack
+- ALLOC now compiles and works correctly
+- The comment already said rbx doesn't need saving (callee-saved), but code was still popping it
+- Test programs with `alloc` now compile without hanging
+
+**Status:** ALLOC primitive is complete and functional. Compilation works end-to-end.
+
+---
+
 ## 2025-10-31 - Evening
 
 last thin you said to me: "You're right - we don't need to save rbx at all! It's callee-saved, so malloc won't clobber it. We're wasting time saving and restoring it."
