@@ -1,0 +1,19 @@
+-- Array with indexing
+-- Create array of 3 i64 values, set element at index 1
+
+: test-indexed-array
+  24 alloc         -- Allocate 24 bytes (3 * 8 bytes)
+  dup              -- Keep base pointer
+  
+  -- Store 100 at index 0
+  dup 100 swap !
+  
+  -- Store 200 at index 1 (offset = 1 * 8 = 8)
+  dup 8 + 200 swap !
+  
+  -- Store 300 at index 2 (offset = 2 * 8 = 16)
+  dup 16 + 300 swap !
+  
+  -- Fetch element at index 1
+  8 + @
+;

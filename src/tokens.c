@@ -192,6 +192,10 @@ static bool read_word(token_stream_t* stream, token_t* token) {
         token->type = TOK_LPAREN;
     } else if (strcmp(buffer, ")") == 0) {
         token->type = TOK_RPAREN;
+    } else if (strcmp(buffer, "[") == 0) {
+        token->type = TOK_LBRACKET;
+    } else if (strcmp(buffer, "]") == 0) {
+        token->type = TOK_RBRACKET;
     } else if (strcmp(buffer, "$") == 0) {
         token->type = TOK_DOLLAR;
     } else if (strcmp(buffer, "--") == 0) {

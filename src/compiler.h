@@ -14,6 +14,9 @@
 /* Maximum quotation nesting depth */
 #define MAX_QUOT_DEPTH 16
 
+/* Maximum array literal nesting depth */
+#define MAX_ARRAY_DEPTH 16
+
 /* Maximum pending quotation references in a single word */
 #define MAX_QUOT_REFS 64
 
@@ -104,6 +107,10 @@ typedef struct compiler {
     /* Pending quotation CID references (for linking) */
     unsigned char* pending_quot_cids[MAX_QUOT_REFS];
     int pending_quot_count;
+
+    /* Array literal compilation support */
+    int array_marker_stack[MAX_ARRAY_DEPTH];  /* Stack depth at each [ */
+    int array_marker_depth;                    /* Number of nested [ ] */
 
     /* Word definition cache (compile-time only) */
     /* Words are named quotations - stored as tokens, compiled at call site */

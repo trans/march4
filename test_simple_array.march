@@ -1,0 +1,7 @@
+-- Simple array test: allocate, store, fetch
+: test-array
+  8 alloc      -- Allocate 8 bytes (1 i64)
+  dup          -- Keep pointer for fetch
+  42 swap !    -- Store 42
+  @            -- Fetch it back
+;

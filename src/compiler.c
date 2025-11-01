@@ -14,6 +14,8 @@
 /* Forward declarations */
 static bool compile_lparen(compiler_t* comp);
 static bool compile_rparen(compiler_t* comp);
+static bool compile_lbracket(compiler_t* comp);
+static bool compile_rbracket(compiler_t* comp);
 static bool compile_if(compiler_t* comp);
 static bool compile_times_dispatch(compiler_t* comp);
 static bool compile_times(compiler_t* comp);
@@ -46,6 +48,7 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     comp->blob_stack_depth = 0;
     comp->quot_counter = 0;
     comp->pending_quot_count = 0;
+    comp->array_marker_depth = 0;
     comp->word_def_count = 0;
     comp->specialization_count = 0;
 
@@ -865,6 +868,10 @@ static bool quot_compile_with_context(
             success = compile_lparen(comp);
         } else if (tok->type == TOK_RPAREN) {
             success = compile_rparen(comp);
+        } else if (tok->type == TOK_LBRACKET) {
+            success = compile_lbracket(comp);
+        } else if (tok->type == TOK_RBRACKET) {
+            success = compile_rbracket(comp);
         } else {
             fprintf(stderr, "Unexpected token type %d in quotation\n", tok->type);
             success = false;
@@ -981,6 +988,12 @@ blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* wo
                 break;
             case TOK_RPAREN:
                 success = compile_rparen(comp);
+                break;
+            case TOK_LBRACKET:
+                success = compile_lbracket(comp);
+                break;
+            case TOK_RBRACKET:
+                success = compile_rbracket(comp);
                 break;
             default:
                 fprintf(stderr, "Unexpected token type %d during word compilation\n", tok->type);
@@ -1177,6 +1190,55 @@ static bool compile_rparen(compiler_t* comp) {
     /* Note: quotation stays on quot_stack for immediate word to consume */
 
     return true;
+}
+
+/* Start array literal [ - mark current stack depth as boundary */
+static bool compile_lbracket(compiler_t* comp) {
+    crash_context_set_token("[");
+    crash_context_set_stacks(comp->type_stack_depth,
+                            comp->quot_stack_depth,
+                            comp->buffer_stack_depth);
+
+    if (comp->array_marker_depth >= MAX_ARRAY_DEPTH) {
+        fprintf(stderr, "Array nesting too deep (max %d)\n", MAX_ARRAY_DEPTH);
+        return false;
+    }
+
+    /* Record current stack depth as the marker boundary */
+    comp->array_marker_stack[comp->array_marker_depth] = comp->type_stack_depth;
+    comp->array_marker_depth++;
+
+    if (comp->verbose) {
+        printf("  [ mark array boundary at depth %d\n", comp->type_stack_depth);
+    }
+
+    return true;
+}
+
+/* End array literal ] - collect items and create array */
+static bool compile_rbracket(compiler_t* comp) {
+    crash_context_set_token("]");
+    crash_context_set_stacks(comp->type_stack_depth,
+                            comp->quot_stack_depth,
+                            comp->buffer_stack_depth);
+
+    if (comp->array_marker_depth == 0) {
+        fprintf(stderr, "Unmatched ']' - no array literal in progress\n");
+        return false;
+    }
+
+    /* Get marker depth */
+    comp->array_marker_depth--;
+    int marker_depth = comp->array_marker_stack[comp->array_marker_depth];
+    int elem_count = comp->type_stack_depth - marker_depth;
+
+    if (comp->verbose) {
+        printf("  ] collect %d array elements from depth %d\n", elem_count, marker_depth);
+    }
+
+    /* TODO: For now, just error - full implementation needed */
+    fprintf(stderr, "Array literals not yet fully implemented\n");
+    return false;
 }
 
 /* Pop quotation from stack (for use by immediate words) */
