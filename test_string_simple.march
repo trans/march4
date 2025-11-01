@@ -1,0 +1,19 @@
+$ -> str ;
+: test-empty
+  ""
+;
+
+$ -> str ;
+: test-short
+  "hi"
+;
+
+$ -> str ;
+: test-longer
+  "hello world"
+;
+
+$ -> str ;
+: test-special
+  "with\nnewline"
+;

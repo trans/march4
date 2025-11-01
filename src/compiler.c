@@ -310,9 +310,12 @@ void compiler_register_primitives(compiler_t* comp) {
     debug_dump_dict_stats(comp->dict);
 }
 
-/* Check if a type is heap-allocated */
+/* Check if a type is heap-allocated (with slot tracking) */
 static bool type_is_heap(type_id_t type) {
-    return type == TYPE_STR;  /* Add TYPE_BUF when buffers are implemented */
+    /* Strings are now heap-allocated like arrays (no slot tracking) */
+    /* Add TYPE_BUF when buffers are implemented */
+    (void)type;  /* Suppress unused warning */
+    return false;
 }
 
 /* Push type onto type stack (non-heap value) */
@@ -491,36 +494,100 @@ static bool compile_number(compiler_t* comp, int64_t num) {
 
 /* Compile a string literal */
 static bool compile_string(compiler_t* comp, const char* str) {
-    /* Legacy: Emit [LIT 0] placeholder */
-    cell_buffer_append(comp->cells, encode_lit(0));
+    /* Strings are now heap-allocated like arrays */
+    /* Strategy: allocate memory, then store each byte */
 
-    /* Store type signature for string (-> str) */
-    unsigned char* sig_cid = db_store_type_sig(comp->db, NULL, "str");
-    if (!sig_cid) {
-        fprintf(stderr, "Error: Failed to store string type signature\n");
-        return false;
-    }
-
-    /* Store string data as blob (UTF-8 bytes including null terminator) */
     size_t str_len = strlen(str) + 1;  /* Include null terminator */
-    unsigned char* cid = db_store_blob(comp->db, BLOB_STRING, sig_cid,
-                                       (const uint8_t*)str, str_len);
-    free(sig_cid);
 
-    if (!cid) {
-        fprintf(stderr, "Error: Failed to store string literal\n");
+    /* Look up ALLOC primitive */
+    dict_entry_t* alloc_prim = dict_lookup(comp->dict, "alloc");
+    if (!alloc_prim) {
+        fprintf(stderr, "Internal error: ALLOC primitive not found\n");
         return false;
     }
 
-    /* Encode CID reference to string in blob */
-    encode_cid_ref(comp->blob, BLOB_DATA, cid);
-    free(cid);
+    /* Look up STORE primitive for writing bytes */
+    dict_entry_t* cstore_prim = dict_lookup(comp->dict, "c!");
+    if (!cstore_prim) {
+        fprintf(stderr, "Internal error: CSTORE (c!) primitive not found\n");
+        return false;
+    }
 
-    /* Push str type (string reference) - heap allocated */
-    push_heap_value(comp, TYPE_STR);
+    /* Emit size literal and ALLOC call */
+    cell_buffer_append(comp->cells, encode_lit(str_len));
+    unsigned char* size_cid = db_store_literal(comp->db, str_len, "i64");
+    if (!size_cid) {
+        fprintf(stderr, "Error: Failed to store string size literal\n");
+        return false;
+    }
+    encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
+    free(size_cid);
+
+    /* Call ALLOC primitive to get string buffer pointer */
+    cell_buffer_append(comp->cells, encode_xt(alloc_prim->addr));
+    encode_primitive(comp->blob, alloc_prim->prim_id);
+
+    /* Now we have the pointer on the stack */
+    /* Store each byte of the string */
+    for (size_t i = 0; i < str_len; i++) {
+        /* dup the pointer */
+        dict_entry_t* dup_prim = dict_lookup(comp->dict, "dup");
+        if (!dup_prim) {
+            fprintf(stderr, "Internal error: DUP primitive not found\n");
+            return false;
+        }
+        cell_buffer_append(comp->cells, encode_xt(dup_prim->addr));
+        encode_primitive(comp->blob, dup_prim->prim_id);
+
+        /* Add offset if not first byte */
+        if (i > 0) {
+            dict_entry_t* add_prim = dict_lookup(comp->dict, "+");
+            if (!add_prim) {
+                fprintf(stderr, "Internal error: ADD primitive not found\n");
+                return false;
+            }
+            cell_buffer_append(comp->cells, encode_lit(i));
+            unsigned char* offset_cid = db_store_literal(comp->db, i, "i64");
+            if (!offset_cid) {
+                fprintf(stderr, "Error: Failed to store offset literal\n");
+                return false;
+            }
+            encode_cid_ref(comp->blob, BLOB_DATA, offset_cid);
+            free(offset_cid);
+
+            cell_buffer_append(comp->cells, encode_xt(add_prim->addr));
+            encode_primitive(comp->blob, add_prim->prim_id);
+        }
+
+        /* Push byte value */
+        cell_buffer_append(comp->cells, encode_lit((unsigned char)str[i]));
+        unsigned char* byte_cid = db_store_literal(comp->db, (unsigned char)str[i], "i64");
+        if (!byte_cid) {
+            fprintf(stderr, "Error: Failed to store byte literal\n");
+            return false;
+        }
+        encode_cid_ref(comp->blob, BLOB_DATA, byte_cid);
+        free(byte_cid);
+
+        /* Swap to get: byte ptr */
+        dict_entry_t* swap_prim = dict_lookup(comp->dict, "swap");
+        if (!swap_prim) {
+            fprintf(stderr, "Internal error: SWAP primitive not found\n");
+            return false;
+        }
+        cell_buffer_append(comp->cells, encode_xt(swap_prim->addr));
+        encode_primitive(comp->blob, swap_prim->prim_id);
+
+        /* Store byte: c! */
+        cell_buffer_append(comp->cells, encode_xt(cstore_prim->addr));
+        encode_primitive(comp->blob, cstore_prim->prim_id);
+    }
+
+    /* Stack now has the string pointer */
+    push_type(comp, TYPE_STR);
 
     if (comp->verbose) {
-        printf("  STR \"%s\" → str\n", str);
+        printf("  STR \"%s\" (%zu bytes) → str\n", str, str_len);
     }
 
     return true;
