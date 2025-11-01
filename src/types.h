@@ -78,6 +78,7 @@
 #define PRIM_I0         43   /* i0 - loop counter */
 #define PRIM_FREE       44   /* free - deallocate slot */
 #define PRIM_ALLOC      45   /* alloc - allocate memory */
+#define PRIM_IDENTITY   46   /* _ - identity function */
 
 /* Cell type */
 typedef uint64_t cell_t;

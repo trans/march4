@@ -1,0 +1,14 @@
+$ -> array ;
+: test-one
+  5 [ _ ]
+;
+
+$ -> array ;
+: test-two
+  1 2 [ _ _ ]
+;
+
+$ -> array ;
+: test-mixed
+  10 [ _ 20 30 ]
+;
