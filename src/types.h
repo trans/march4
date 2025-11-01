@@ -79,6 +79,7 @@
 #define PRIM_FREE       44   /* free - deallocate slot */
 #define PRIM_ALLOC      45   /* alloc - allocate memory */
 #define PRIM_IDENTITY   46   /* _ - identity function */
+#define PRIM_MEMCPY     47   /* memcpy - copy memory block */
 
 /* Cell type */
 typedef uint64_t cell_t;

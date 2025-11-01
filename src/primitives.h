@@ -76,6 +76,7 @@ extern void op_execute(void);
 /* Memory management */
 extern void op_alloc(void);
 extern void op_free(void);
+extern void op_memcpy(void);
 
 /* ============================================================================ */
 /* Primitive Dispatch Table */
