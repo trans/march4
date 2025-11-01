@@ -1,0 +1,8 @@
+-- Test specialization caching
+$ a -> a a a ;
+: ddup dup dup ;
+
+-- Call ddup multiple times with same types - should show cache hit
+: test1 5 ddup drop drop ;
+: test2 10 ddup drop drop ;
+: test3 20 ddup drop drop ;

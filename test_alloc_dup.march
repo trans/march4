@@ -1,0 +1,4 @@
+-- Test alloc and dup
+: test-dup
+  64 alloc dup
+;

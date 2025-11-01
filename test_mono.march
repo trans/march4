@@ -1,0 +1,6 @@
+-- Test monomorphization
+$ a -> a a a ;
+: ddup dup dup ;
+
+-- This word uses ddup, should trigger monomorphization
+: triple 5 ddup drop drop ;

@@ -1,5 +1,10 @@
 # March Development Log
 
+
+## 2025-10-31 - Evening
+
+last thin you said to me: "You're right - we don't need to save rbx at all! It's callee-saved, so malloc won't clobber it. We're wasting time saving and restoring it."
+
 ## 2025-10-31 - Current Status
 
 **Where we are:**

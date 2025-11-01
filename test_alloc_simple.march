@@ -1,0 +1,4 @@
+-- Simplest alloc test - just allocate and drop
+: test-simple
+  64 alloc drop
+;

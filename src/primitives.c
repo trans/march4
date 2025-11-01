@@ -56,6 +56,7 @@ void* primitive_dispatch_table[256] = {
     [PRIM_0BRANCH]  = &op_0branch,
     [PRIM_EXECUTE]  = &op_execute,
     [PRIM_I0]       = &op_i0,
+    [PRIM_ALLOC]    = &op_alloc,
     [PRIM_FREE]     = &op_free,
 };
 
@@ -137,6 +138,7 @@ void register_primitives(dictionary_t* dict) {
     REG_PRIM("execute", PRIM_EXECUTE, op_execute, "a ->");
 
     /* Memory management */
+    REG_PRIM("alloc", PRIM_ALLOC, op_alloc, "i64 -> ptr");
     REG_PRIM("free", PRIM_FREE, op_free, "i64 ->");
 }
 

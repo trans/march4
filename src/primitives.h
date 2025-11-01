@@ -73,6 +73,7 @@ extern void op_i0(void);
 extern void op_execute(void);
 
 /* Memory management */
+extern void op_alloc(void);
 extern void op_free(void);
 
 /* ============================================================================ */

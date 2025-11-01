@@ -1,0 +1,2 @@
+-- Test dup on a literal
+: test-dup-lit  42 dup ;

@@ -1,0 +1,6 @@
+-- Test alloc primitive
+-- Allocate 64 bytes and verify we get a non-null pointer
+
+: test-alloc
+  64 alloc    -- Allocate 64 bytes, should get pointer
+;

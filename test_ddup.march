@@ -1,0 +1,4 @@
+$ a -> a a a ;
+: ddup dup dup ;
+
+: test-ddup 5 ddup ;

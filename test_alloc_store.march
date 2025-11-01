@@ -1,0 +1,9 @@
+-- Test alloc and store
+-- Allocate memory, store a value, fetch it back
+
+: test-store
+  64 alloc     -- Get pointer
+  dup          -- Duplicate pointer (for later fetch)
+  42 swap !    -- Store 42 at that address
+  @            -- Fetch value back
+;

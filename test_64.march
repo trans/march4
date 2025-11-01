@@ -1,0 +1,2 @@
+-- Just push 64
+: test-64  64 ;
