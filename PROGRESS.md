@@ -1,6 +1,62 @@
 # March Language - Working Features Summary
 
-**Current Status (2025-10-31):** Design B monomorphization (Phases 1-2) complete! Words stored as tokens, compiled at call-site with concrete types. Slot-based memory management working. Core compiler with 45 primitives, type checking, quotations, conditionals, loops.
+**Current Status (2025-11-01):** Array literals complete with identity primitive and nested support! String storage refactored to heap allocation with memcpy optimization. 47 primitives total. Clean separation: Database = code storage, Heap = runtime data (program-controlled).
+
+---
+
+  ✅ 13. Array Literals & String Storage Refactor - COMPLETE!
+
+  Date: 2025-11-01
+  Status: ✅ Complete
+
+  **Array Features Implemented:**
+  - Empty arrays: `[ ]`
+  - Literal arrays: `[ 10 20 30 ]`
+  - Identity primitive `_` (signature: `a -> a`) for stack capture: `5 [ _ ]`
+  - Nested arrays: `[ [ 1 2 ] [ 3 4 ] ]` (arbitrary depth)
+  - Homogeneous type checking enforced
+
+  **String Storage Refactor:**
+  - Changed from automatic database persistence to heap allocation
+  - Strings now heap-allocated like arrays (program controls persistence)
+  - Added `memcpy` primitive for efficient bulk copying
+  - Optimized compilation: 60+ instructions → 5 instructions per string
+  - Architecture: DB stores literal data (cached), heap gets fresh copy each execution
+
+  **New Primitives:**
+  - `_` (PRIM_IDENTITY, 46) - Identity function `a -> a`
+  - `memcpy` (PRIM_MEMCPY, 47) - Memory copy `ptr ptr i64 -> ptr`
+
+  **Type System:**
+  - Stack types: `i64`, `u64`, `f64`, `bool`, `ptr`
+  - Heap types: `str`, `array` (program-controlled allocation)
+  - Polymorphic: `a`-`z` type variables
+  - Added `TYPE_ARRAY` support across compiler, dictionary, runner
+
+  **Architecture Clarification:**
+  - Database = Code storage (string literals, compiled words, type sigs)
+  - Loader = Runtime cache (load blobs once from DB)
+  - Heap = Runtime data (fresh allocations, program-controlled)
+
+  **Test Files:**
+  - `test_array_typed.march` - Typed array literals
+  - `test_empty_array.march` - Empty array handling
+  - `test_array_identity.march` - Identity primitive in arrays
+  - `test_array_nested.march` - Nested array structures
+  - `test_string_simple.march` - String literal tests
+
+  **Files Modified:**
+  - `kernel/x86-64/identity.asm` - Identity primitive (no-op)
+  - `kernel/x86-64/memcpy.asm` - Memory copy with rep movsb
+  - `src/compiler.c` - Array literal support, string memcpy optimization
+  - `src/dictionary.c` - TYPE_ARRAY parsing and display
+  - `src/runner.c` - TYPE_ARRAY stack display
+  - `src/types.h` - TYPE_ARRAY, PRIM_IDENTITY, PRIM_MEMCPY
+  - `src/primitives.h/c` - Register new primitives
+
+  **Performance:**
+  - String "hello world" (12 bytes): 60+ instructions → 5 instructions
+  - Array literal overhead minimal (alloc + element stores)
 
 ---
 
