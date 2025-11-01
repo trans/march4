@@ -1,0 +1,10 @@
+-- Test array literal with verbose compilation output
+$ -> ptr ;
+: make-simple-array
+  [ 10 20 30 ]
+;
+
+$ -> ;
+: use-array
+  make-simple-array drop
+;

@@ -91,6 +91,7 @@ typedef enum {
     TYPE_PTR,      /* Pointer/address */
     TYPE_BOOL,     /* Boolean */
     TYPE_STR,      /* String reference (CID) */
+    TYPE_ARRAY,    /* Array reference (homogeneous elements) */
     TYPE_ANY,      /* Polymorphic type variable */
     /* Type variables (single-letter names: a, b, c, ...) */
     TYPE_VAR_A, TYPE_VAR_B, TYPE_VAR_C, TYPE_VAR_D, TYPE_VAR_E,

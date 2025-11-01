@@ -1236,9 +1236,150 @@ static bool compile_rbracket(compiler_t* comp) {
         printf("  ] collect %d array elements from depth %d\n", elem_count, marker_depth);
     }
 
-    /* TODO: For now, just error - full implementation needed */
-    fprintf(stderr, "Array literals not yet fully implemented\n");
-    return false;
+    /* Empty array */
+    if (elem_count == 0) {
+        fprintf(stderr, "Empty array literals not yet supported\n");
+        return false;
+    }
+
+    /* Check if all elements have the same type (homogeneous array) */
+    type_id_t elem_type = comp->type_stack[marker_depth].type;
+    bool homogeneous = true;
+    for (int i = marker_depth + 1; i < comp->type_stack_depth; i++) {
+        if (comp->type_stack[i].type != elem_type) {
+            homogeneous = false;
+            break;
+        }
+    }
+
+    if (!homogeneous) {
+        fprintf(stderr, "Heterogeneous tuples not yet supported\n");
+        return false;
+    }
+
+    /* Look up ALLOC primitive */
+    dict_entry_t* alloc_prim = dict_lookup(comp->dict, "alloc");
+    if (!alloc_prim) {
+        fprintf(stderr, "Internal error: ALLOC primitive not found\n");
+        return false;
+    }
+
+    /* Look up STORE primitive */
+    dict_entry_t* store_prim = dict_lookup(comp->dict, "!");
+    if (!store_prim) {
+        fprintf(stderr, "Internal error: STORE (!) primitive not found\n");
+        return false;
+    }
+
+    /* Calculate array size in bytes: elem_count * 8 */
+    int64_t array_size = elem_count * 8;
+
+    /* Emit size literal and ALLOC call */
+    /* Legacy: Emit LIT cell */
+    cell_buffer_append(comp->cells, encode_lit(array_size));
+
+    /* CID-based: Store literal and encode reference */
+    unsigned char* size_cid = db_store_literal(comp->db, array_size, "i64");
+    if (!size_cid) {
+        fprintf(stderr, "Error: Failed to store array size literal\n");
+        return false;
+    }
+    encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
+    free(size_cid);
+
+    /* Call ALLOC primitive */
+    cell_buffer_append(comp->cells, encode_xt(alloc_prim->addr));
+    encode_primitive(comp->blob, alloc_prim->prim_id);
+
+    /* Now we have: elem[0] elem[1] ... elem[n-1] array_ptr on runtime stack */
+    /* Strategy: Move ptr to return stack, store elements in reverse order, restore ptr */
+
+    if (comp->verbose) {
+        printf("    Allocating array: %d elements * 8 = %ld bytes\n", elem_count, array_size);
+    }
+
+    /* Look up return stack primitives */
+    dict_entry_t* tor_prim = dict_lookup(comp->dict, ">r");
+    dict_entry_t* fromr_prim = dict_lookup(comp->dict, "r>");
+    dict_entry_t* rfetch_prim = dict_lookup(comp->dict, "r@");
+    dict_entry_t* add_prim = dict_lookup(comp->dict, "+");
+
+    if (!tor_prim || !fromr_prim || !rfetch_prim || !add_prim) {
+        fprintf(stderr, "Internal error: Return stack primitives not found\n");
+        return false;
+    }
+
+    /* Move array pointer to return stack: >r */
+    /* Stack: elem[0] elem[1] ... elem[n-1] */
+    /* R-stack: ptr */
+    cell_buffer_append(comp->cells, encode_xt(tor_prim->addr));
+    encode_primitive(comp->blob, tor_prim->prim_id);
+
+    /* Store each element in reverse order (from TOS down) */
+    /* elem[n-1] is on TOS and should go to offset (n-1)*8 */
+    for (int i = elem_count - 1; i >= 0; i--) {
+        int64_t offset = i * 8;
+
+        /* Fetch array pointer from return stack: r@ */
+        /* Stack: elem[0] ... elem[i] ptr */
+        cell_buffer_append(comp->cells, encode_xt(rfetch_prim->addr));
+        encode_primitive(comp->blob, rfetch_prim->prim_id);
+
+        /* Push offset literal */
+        cell_buffer_append(comp->cells, encode_lit(offset));
+        unsigned char* offset_cid = db_store_literal(comp->db, offset, "i64");
+        if (!offset_cid) {
+            fprintf(stderr, "Error: Failed to store offset literal\n");
+            return false;
+        }
+        encode_cid_ref(comp->blob, BLOB_DATA, offset_cid);
+        free(offset_cid);
+
+        /* Stack: elem[0] ... elem[i] ptr offset */
+
+        /* Add offset to pointer: + */
+        /* Stack: elem[0] ... elem[i] (ptr+offset) */
+        cell_buffer_append(comp->cells, encode_xt(add_prim->addr));
+        encode_primitive(comp->blob, add_prim->prim_id);
+
+        /* Stack: elem[0] ... elem[i] (ptr+offset) */
+        /* We need: elem[0] ... elem[i-1] elem[i] (ptr+offset) for store */
+        /* But elem[i] is currently at TOS-1, so swap */
+
+        dict_entry_t* swap_prim = dict_lookup(comp->dict, "swap");
+        if (!swap_prim) {
+            fprintf(stderr, "Internal error: SWAP primitive not found\n");
+            return false;
+        }
+        cell_buffer_append(comp->cells, encode_xt(swap_prim->addr));
+        encode_primitive(comp->blob, swap_prim->prim_id);
+
+        /* Stack: elem[0] ... elem[i-1] elem[i] (ptr+offset) */
+
+        /* Store: ! (consumes value and address) */
+        /* Stack: elem[0] ... elem[i-1] */
+        cell_buffer_append(comp->cells, encode_xt(store_prim->addr));
+        encode_primitive(comp->blob, store_prim->prim_id);
+
+        if (comp->verbose) {
+            printf("    Store element %d at offset %ld\n", i, offset);
+        }
+    }
+
+    /* Restore array pointer from return stack: r> */
+    /* Stack: ptr */
+    cell_buffer_append(comp->cells, encode_xt(fromr_prim->addr));
+    encode_primitive(comp->blob, fromr_prim->prim_id);
+
+    /* Update type stack: remove all elements, push array pointer */
+    comp->type_stack_depth = marker_depth;
+    push_type(comp, TYPE_ARRAY);
+
+    if (comp->verbose) {
+        printf("  ] created array of %d elements → array\n", elem_count);
+    }
+
+    return true;
 }
 
 /* Pop quotation from stack (for use by immediate words) */
