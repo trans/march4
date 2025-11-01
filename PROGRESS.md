@@ -1,6 +1,67 @@
 # March Language - Working Features Summary
 
-**Current Status (2025-11-01):** Array literals complete with identity primitive and nested support! String storage refactored to heap allocation with memcpy optimization. 47 primitives total. Clean separation: Database = code storage, Heap = runtime data (program-controlled).
+**Current Status (2025-11-01):** 32-byte headers implemented for arrays and strings! Strings now immutable and cached for zero runtime cost. Array/string length primitives added. 51 primitives total. Clean separation: Database = persistent code/literals, Loader = runtime cache, Heap = mutable runtime data.
+
+---
+
+  ✅ 14. 32-Byte Headers & Immutable Strings - COMPLETE!
+
+  Date: 2025-11-01
+  Status: ✅ Complete | TODO: array-at, mut primitives tomorrow
+
+  **Problem:** Arrays and strings had no metadata (length unknown), strings allocated+copied every use, no way to query properties efficiently.
+
+  **Solution:** Uniform 32-byte headers with count, elem_size, elem_type metadata. Made strings immutable and cached in loader for zero-cost sharing.
+
+  **Header Layout (32 bytes):**
+  ```
+  [count: u64][elem_size: u8][padding: 7][elem_type: u64][reserved: u64][data...]
+       0-7        8            9-15         16-23           24-31        32+
+  ```
+
+  **Arrays (Mutable, Fresh Each Use):**
+  - Compile time: Generate code to allocate 32 + (count * 8) bytes
+  - Runtime: Write header (count, elem_size=8, elem_type), store elements at offset 32+
+  - Each execution creates fresh heap array with metadata
+
+  **Strings (Immutable, Shared):**
+  - Compile time: Build header+data buffer, store in DB as BLOB_STRING
+  - Runtime (first use): Loader fetches blob, caches in memory
+  - Runtime (subsequent): Return pointer to cached blob (zero cost!)
+  - Shared across all uses, immutable
+
+  **New Primitives (49 total):**
+  - `array-length` (PRIM_ARRAY_LEN, 48) - Read count field `array -> i64`
+  - `str-length` (PRIM_STR_LEN, 49) - Read count field `str -> i64`
+
+  **Performance:**
+  - String "hello" repeated 1000 times:
+    - Before: 1000 alloc + 1000 memcpy calls
+    - After: 1 DB fetch (first use) + 999 pointer returns (cached)
+  - Length queries: O(1) header read vs O(n) scan
+
+  **Architecture Clarification:**
+  - **Database**: Persistent storage (code, string literals with headers, type sigs)
+  - **Loader**: Runtime cache (CID → memory address, loaded once per blob)
+  - **Heap**: Mutable runtime allocations (arrays, future mutable string copies via `mut`)
+
+  **Design Decision - Type in Header:**
+  - Stored elem_type for introspection, but VM never dispatches on it
+  - Compiler does type checking (compile-time safety)
+  - Type queries can monomorphize at compile time
+  - Pragmatic: store type info, discipline prevents abuse
+
+  **Next Steps:**
+  - Add `array-at` primitive for indexing
+  - Add `mut` primitive for making mutable string copies
+  - Consider COW (copy-on-write) schemes for efficiency
+
+  **Files Modified:**
+  - `kernel/x86-64/array-length.asm` - Simple [ptr] read
+  - `kernel/x86-64/str-length.asm` - Simple [ptr] read
+  - `src/compiler.c` - Array +32 header allocation, string immutable with header
+  - `src/types.h` - PRIM_ARRAY_LEN, PRIM_STR_LEN
+  - `src/primitives.h/c` - Register length primitives
 
 ---
 
