@@ -233,6 +233,7 @@ static type_id_t parse_type(const char* str) {
     if (strcmp(str, "ptr") == 0) return TYPE_PTR;
     if (strcmp(str, "bool") == 0) return TYPE_BOOL;
     if (strcmp(str, "str") == 0) return TYPE_STR;
+    if (strcmp(str, "array") == 0) return TYPE_ARRAY;
     if (strcmp(str, "any") == 0) return TYPE_ANY;
     return TYPE_UNKNOWN;
 }
@@ -291,6 +292,7 @@ static const char* type_to_string(type_id_t type) {
         case TYPE_PTR: return "ptr";
         case TYPE_BOOL: return "bool";
         case TYPE_STR: return "str";
+        case TYPE_ARRAY: return "array";
         case TYPE_ANY: return "any";
         default: return "???";
     }

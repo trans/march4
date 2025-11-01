@@ -1,0 +1,9 @@
+$ -> array ;
+: make-empty
+  [ ]
+;
+
+$ array -> ;
+: test-it
+  make-empty drop
+;

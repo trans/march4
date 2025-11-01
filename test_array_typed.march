@@ -1,0 +1,19 @@
+$ -> array ;
+: make-array
+  [ 10 20 30 ]
+;
+
+$ -> array ;
+: make-empty
+  [ ]
+;
+
+$ array -> ;
+: test-array
+  make-array drop
+;
+
+$ array -> ;
+: test-empty
+  make-empty drop
+;

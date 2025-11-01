@@ -664,6 +664,7 @@ static bool compile_word(compiler_t* comp, const char* name) {
                     case TYPE_PTR: p += sprintf(p, "ptr "); break;
                     case TYPE_BOOL: p += sprintf(p, "bool "); break;
                     case TYPE_STR: p += sprintf(p, "str "); break;
+                    case TYPE_ARRAY: p += sprintf(p, "array "); break;
                     default: p += sprintf(p, "? "); break;
                 }
             }
@@ -677,6 +678,7 @@ static bool compile_word(compiler_t* comp, const char* name) {
                     case TYPE_PTR: p += sprintf(p, "ptr "); break;
                     case TYPE_BOOL: p += sprintf(p, "bool "); break;
                     case TYPE_STR: p += sprintf(p, "str "); break;
+                    case TYPE_ARRAY: p += sprintf(p, "array "); break;
                     default: p += sprintf(p, "? "); break;
                 }
             }
@@ -1236,10 +1238,39 @@ static bool compile_rbracket(compiler_t* comp) {
         printf("  ] collect %d array elements from depth %d\n", elem_count, marker_depth);
     }
 
-    /* Empty array */
+    /* Handle empty array case */
     if (elem_count == 0) {
-        fprintf(stderr, "Empty array literals not yet supported\n");
-        return false;
+        /* Empty array: just allocate 0 bytes (malloc(0) is implementation-defined but typically returns non-NULL) */
+        /* Actually, let's allocate a minimal 8 bytes to ensure valid pointer */
+        dict_entry_t* alloc_prim = dict_lookup(comp->dict, "alloc");
+        if (!alloc_prim) {
+            fprintf(stderr, "Internal error: ALLOC primitive not found\n");
+            return false;
+        }
+
+        /* Allocate 8 bytes for empty array (ensures valid pointer) */
+        cell_buffer_append(comp->cells, encode_lit(8));
+        unsigned char* size_cid = db_store_literal(comp->db, 8, "i64");
+        if (!size_cid) {
+            fprintf(stderr, "Error: Failed to store array size literal\n");
+            return false;
+        }
+        encode_cid_ref(comp->blob, BLOB_DATA, size_cid);
+        free(size_cid);
+
+        /* Call ALLOC */
+        cell_buffer_append(comp->cells, encode_xt(alloc_prim->addr));
+        encode_primitive(comp->blob, alloc_prim->prim_id);
+
+        /* Update type stack: push array pointer */
+        comp->type_stack_depth = marker_depth;
+        push_type(comp, TYPE_ARRAY);
+
+        if (comp->verbose) {
+            printf("  ] created empty array → array\n");
+        }
+
+        return true;
     }
 
     /* Check if all elements have the same type (homogeneous array) */

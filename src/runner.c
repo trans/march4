@@ -67,6 +67,7 @@ bool runner_execute(runner_t* runner, const char* name) {
                 case TYPE_PTR: p += sprintf(p, "ptr "); break;
                 case TYPE_BOOL: p += sprintf(p, "bool "); break;
                 case TYPE_STR: p += sprintf(p, "str "); break;
+                case TYPE_ARRAY: p += sprintf(p, "array "); break;
                 default: p += sprintf(p, "? "); break;
             }
         }
