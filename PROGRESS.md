@@ -1,13 +1,52 @@
 # March Language - Working Features Summary
 
-**Current Status (2025-11-02):** Implemented mutable type system with `array!` and `str!` types! Arrays and strings are immutable by default, use `mut` to get mutable variants. Type system enforces immutability while allowing controlled mutation. 52 primitives total. Clean separation: Database = persistent code/literals, Loader = runtime cache, Heap = mutable runtime data.
+**Current Status (2025-11-02):** Implemented mutable type system with `array!` and `str!` types! Arrays are now usable with `march.array.at` for indexing. Type system enforces immutability while allowing controlled mutation. 53 primitives total. Clean separation: Database = persistent code/literals, Loader = runtime cache, Heap = mutable runtime data.
+
+---
+
+  ✅ 16. Array Indexing Primitive - COMPLETE!
+
+  Date: 2025-11-02
+  Status: ✅ Complete | TODO: array-set! for mutation, high-level 'at' dispatch
+
+  **Problem:** Arrays could be created but not read! No way to access individual elements.
+
+  **Solution:** Implemented `march.array.at` primitive for reading array elements by index.
+
+  **Naming Convention:**
+  - Used namespaced `march.array.at` instead of plain `at`
+  - Reserves `at` for future high-level type-based dispatch
+  - Clear separation: low-level primitives use namespaces, high-level words are clean
+
+  **Implementation:**
+  - Signature: `array i64 -> i64` (also accepts `array!`)
+  - Bounds checking: returns 0 on out-of-bounds (TODO: proper error handling)
+  - Reads count from header (offset 0) for bounds check
+  - Calculates element offset: `32 + (index * 8)`
+  - Works on both immutable and mutable arrays
+
+  **New Primitives (53 total):**
+  - `march.array.at` (PRIM_ARRAY_AT, 51) - Read array element by index
+
+  **Usage Example:**
+  ```march
+  [ 10 20 30 40 50 ]    ( Create array )
+  dup 0 march.array.at  ( Read index 0 → 10 )
+  dup 2 march.array.at  ( Read index 2 → 30 )
+  dup 4 march.array.at  ( Read index 4 → 50 )
+  ```
+
+  **Files Modified:**
+  - `kernel/x86-64/array-at.asm` - Assembly implementation with bounds checking
+  - `src/types.h` - Added PRIM_ARRAY_AT (51)
+  - `src/primitives.h/c` - Registered march.array.at
 
 ---
 
   ✅ 15. Mutable Type System & Copy Primitive - COMPLETE!
 
   Date: 2025-11-02
-  Status: ✅ Complete | TODO: array-at for indexing
+  Status: ✅ Complete
 
   **Problem:** Arrays and strings are semantically immutable by design, but we need a way to create mutable copies when modifications are needed. Need type system to distinguish immutable vs mutable references.
 
