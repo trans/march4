@@ -1,49 +1,59 @@
 # March Language - Working Features Summary
 
-**Current Status (2025-11-02):** Implemented `mut` primitive for creating mutable copies of arrays and strings! Arrays and strings are semantically immutable by default - use `mut` for explicit mutable copies. 52 primitives total. Clean separation: Database = persistent code/literals, Loader = runtime cache, Heap = mutable runtime data.
+**Current Status (2025-11-02):** Implemented mutable type system with `array!` and `str!` types! Arrays and strings are immutable by default, use `mut` to get mutable variants. Type system enforces immutability while allowing controlled mutation. 52 primitives total. Clean separation: Database = persistent code/literals, Loader = runtime cache, Heap = mutable runtime data.
 
 ---
 
-  ✅ 15. Mutable Copy Primitive - COMPLETE!
+  ✅ 15. Mutable Type System & Copy Primitive - COMPLETE!
 
   Date: 2025-11-02
   Status: ✅ Complete | TODO: array-at for indexing
 
-  **Problem:** Arrays and strings are semantically immutable by design, but we need a way to create mutable copies when modifications are needed.
+  **Problem:** Arrays and strings are semantically immutable by design, but we need a way to create mutable copies when modifications are needed. Need type system to distinguish immutable vs mutable references.
 
-  **Solution:** Implemented `mut` primitive that creates a deep copy by reading the 32-byte header to determine size, allocating new memory, and copying all bytes.
+  **Solution:** Added mutable type variants (`array!` and `str!`) to type system. Implemented `mut` primitive that creates a deep copy and returns mutable type.
+
+  **Type System:**
+  - **Immutable types:** `array`, `str` (default)
+  - **Mutable types:** `array!`, `str!` (via `mut` primitive)
+  - **Type compatibility:** Mutable accepted where immutable expected (for read-only ops like `array-length`)
+  - **Notation:** `!` suffix indicates mutability (functional programming convention)
 
   **Immutability Semantics:**
-  - **Strings:** Immutable and cached in DB (zero runtime allocation cost, shared across all uses)
-  - **Arrays:** Runtime-allocated, semantically immutable by convention (fresh allocation each use)
-  - **Mutable copies:** Use `mut` to create explicit mutable copy when modification needed
+  - **Strings (`str`):** Immutable, cached in DB (zero runtime cost, shared)
+  - **Mutable strings (`str!`):** Heap-allocated copy
+  - **Arrays (`array`):** Runtime-allocated, semantically immutable
+  - **Mutable arrays (`array!`):** Heap-allocated, explicitly mutable
 
   **Implementation:**
   ```asm
-  op_mut:
+  op_mut:  ; array -> array! or str -> str!
     1. Read header: count (u64) and elem_size (u8) from offsets 0 and 8
     2. Calculate total_size = 32 + (count * elem_size)
     3. Allocate new memory via malloc
     4. Copy all bytes (header + data) using rep movsb
-    5. Return new pointer
+    5. Return new pointer with mutable type
   ```
 
-  **New Primitives (52 total):**
-  - `mut` (PRIM_MUT, 50) - Create mutable copy `array -> array` (also works with strings)
+  **New Types & Primitives:**
+  - `TYPE_ARRAY_MUT` - Mutable array type (`array!`)
+  - `TYPE_STR_MUT` - Mutable string type (`str!`)
+  - `mut` (PRIM_MUT, 50) - Create mutable copy: `array -> array!`, `str -> str!`
 
   **Usage Example:**
   ```march
-  [ 1 2 3 ]        ( Create immutable array )
-  mut              ( Create mutable copy )
-  ( Now have two independent arrays with different pointers )
+  [ 1 2 3 ]        ( Create immutable array, type: array )
+  mut              ( Create mutable copy, type: array! )
+  array-length     ( Works on both array and array! )
   ```
 
   **Files Modified:**
   - `kernel/x86-64/mut.asm` - Assembly implementation using malloc and rep movsb
-  - `src/types.h` - Added PRIM_MUT (50)
-  - `src/primitives.h` - Added op_mut declaration
-  - `src/primitives.c` - Registered mut in dispatch table
-  - `src/compiler.c` - Added documentation comments clarifying immutability semantics
+  - `src/types.h` - Added TYPE_ARRAY_MUT, TYPE_STR_MUT, PRIM_MUT
+  - `src/dictionary.c` - Parse/display array! and str! types
+  - `src/runner.c` - Display mutable types on stack
+  - `src/primitives.h/c` - Register mut primitive with array -> array! signature
+  - `src/compiler.c` - Type compatibility: allow array! where array expected
 
 ---
 
