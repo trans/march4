@@ -1,13 +1,67 @@
 # March Language - Working Features Summary
 
-**Current Status (2025-11-02):** Arrays are fully functional! Namespaced primitives (march.array.*) provide length, indexing, and mutation. Type system enforces immutability (`array`) vs mutability (`array!`). 54 primitives total. Clean separation: Database = persistent code/literals, Loader = runtime cache, Heap = mutable runtime data.
+**Current Status (2025-11-02):** Arrays are production-ready! Complete array API with fill, reverse, concat operations. Namespaced primitives (march.array.*) provide comprehensive manipulation. Type system enforces immutability (`array`) vs mutability (`array!`). 57 primitives total. Clean separation: Database = persistent code/literals, Loader = runtime cache, Heap = mutable runtime data.
+
+---
+
+  ✅ 18. Array Fill, Reverse, and Concat - COMPLETE!
+
+  Date: 2025-11-02
+  Status: ✅ Complete | TODO: high-level 'at' dispatch, string operations
+
+  **Problem:** Arrays had basic operations but lacked utilities for common transformations like filling, reversing, and combining.
+
+  **Solution:** Implemented three powerful array manipulation primitives.
+
+  **New Primitives (57 total):**
+  - `march.array.fill!` (PRIM_ARRAY_FILL, 53) - Fill all elements with value
+  - `march.array.reverse!` (PRIM_ARRAY_REV, 54) - Reverse in place
+  - `march.array.concat` (PRIM_ARRAY_CONCAT, 55) - Concatenate arrays
+
+  **Implementations:**
+
+  **fill!** - `array! i64 -> array!`
+  - Loops through all elements, writing value
+  - Simple and efficient
+  - Example: `arr 99 march.array.fill!` → all elements become 99
+
+  **reverse!** - `array! -> array!`
+  - Two-pointer algorithm: swap from outside in
+  - In-place, no allocation
+  - Example: `[ 1 2 3 4 5 ] mut march.array.reverse!` → [ 5 4 3 2 1 ]
+
+  **concat** - `array array -> array` (immutable!)
+  - Allocates new array with combined size
+  - Copies all elements from both arrays sequentially
+  - Returns immutable array (can't grow fixed-size arrays)
+  - Example: `[ 1 2 ] [ 3 4 ] march.array.concat` → [ 1 2 3 4 ]
+
+  **Usage Examples:**
+  ```march
+  ( Fill with zeros )
+  [ 1 2 3 ] mut 0 march.array.fill!
+
+  ( Reverse )
+  [ 10 20 30 ] mut march.array.reverse!
+
+  ( Concatenate )
+  [ 1 2 3 ] [ 4 5 6 ] march.array.concat
+  dup march.array.length  ( Returns 6 )
+  ```
+
+  **Files Modified:**
+  - `kernel/x86-64/array-fill.asm` - Fill implementation
+  - `kernel/x86-64/array-reverse.asm` - Reverse implementation
+  - `kernel/x86-64/array-concat.asm` - Concat implementation (calls malloc)
+  - `src/types.h` - Added PRIM_ARRAY_FILL, PRIM_ARRAY_REV, PRIM_ARRAY_CONCAT
+  - `src/primitives.h/c` - Registered primitives
 
 ---
 
   ✅ 17. Array Mutation & Namespacing - COMPLETE!
 
   Date: 2025-11-02
-  Status: ✅ Complete | TODO: high-level 'at' dispatch, string operations
+  Status: ✅ Complete
 
   **Problem:** Arrays could be read but not modified. Naming inconsistency between primitives.
 
