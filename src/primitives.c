@@ -65,6 +65,9 @@ void* primitive_dispatch_table[256] = {
     [PRIM_MUT]      = &op_mut,
     [PRIM_ARRAY_AT] = &op_array_at,
     [PRIM_ARRAY_SET] = &op_array_set,
+    [PRIM_ARRAY_FILL] = &op_array_fill,
+    [PRIM_ARRAY_REV] = &op_array_reverse,
+    [PRIM_ARRAY_CONCAT] = &op_array_concat,
 };
 
 /* ============================================================================ */
@@ -156,6 +159,9 @@ void register_primitives(dictionary_t* dict) {
     REG_PRIM("mut", PRIM_MUT, op_mut, "array -> array!");  /* Also works with str -> str! */
     REG_PRIM("march.array.at", PRIM_ARRAY_AT, op_array_at, "array i64 -> i64");  /* Also accepts array! */
     REG_PRIM("march.array.set!", PRIM_ARRAY_SET, op_array_set, "array! i64 i64 -> array!");  /* Returns array for chaining */
+    REG_PRIM("march.array.fill!", PRIM_ARRAY_FILL, op_array_fill, "array! i64 -> array!");  /* Fill with value */
+    REG_PRIM("march.array.reverse!", PRIM_ARRAY_REV, op_array_reverse, "array! -> array!");  /* Reverse in place */
+    REG_PRIM("march.array.concat", PRIM_ARRAY_CONCAT, op_array_concat, "array array -> array");  /* Concatenate (immutable) */
 }
 
 #undef REG_PRIM

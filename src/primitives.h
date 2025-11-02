@@ -84,6 +84,9 @@ extern void op_str_length(void);
 extern void op_mut(void);
 extern void op_array_at(void);
 extern void op_array_set(void);
+extern void op_array_fill(void);
+extern void op_array_reverse(void);
+extern void op_array_concat(void);
 
 /* ============================================================================ */
 /* Primitive Dispatch Table */

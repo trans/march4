@@ -85,6 +85,9 @@
 #define PRIM_MUT        50   /* mut - create mutable copy */
 #define PRIM_ARRAY_AT   51   /* march.array.at - read array element */
 #define PRIM_ARRAY_SET  52   /* march.array.set! - write array element */
+#define PRIM_ARRAY_FILL 53   /* march.array.fill! - fill with value */
+#define PRIM_ARRAY_REV  54   /* march.array.reverse! - reverse in place */
+#define PRIM_ARRAY_CONCAT 55 /* march.array.concat - concatenate arrays */
 
 /* Cell type */
 typedef uint64_t cell_t;
