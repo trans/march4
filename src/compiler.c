@@ -1266,9 +1266,9 @@ static bool compile_rbracket(compiler_t* comp) {
         printf("  ] collect %d array elements from depth %d\n", elem_count, marker_depth);
     }
 
-    /* Handle empty array case */
+    /* Handle empty array case - runtime allocated (semantically immutable) */
     if (elem_count == 0) {
-        /* Empty array: allocate header (24 bytes) with count=0 */
+        /* Empty array: allocate header (32 bytes) with count=0 */
         dict_entry_t* alloc_prim = dict_lookup(comp->dict, "alloc");
         dict_entry_t* store_prim = dict_lookup(comp->dict, "!");
         if (!alloc_prim || !store_prim) {
@@ -1305,11 +1305,12 @@ static bool compile_rbracket(compiler_t* comp) {
         encode_primitive(comp->blob, store_prim->prim_id);
 
         /* Update type stack: push array pointer */
+        /* Note: Arrays are semantically immutable - use 'mut' for mutable copy */
         comp->type_stack_depth = marker_depth;
         push_type(comp, TYPE_ARRAY);
 
         if (comp->verbose) {
-            printf("  ] created empty array (32-byte header) → array\n");
+            printf("  ] created empty array (semantically immutable) → array\n");
         }
 
         return true;

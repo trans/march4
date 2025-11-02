@@ -82,6 +82,7 @@
 #define PRIM_MEMCPY     47   /* memcpy - copy memory block */
 #define PRIM_ARRAY_LEN  48   /* array-length - get array count */
 #define PRIM_STR_LEN    49   /* str-length - get string count */
+#define PRIM_MUT        50   /* mut - create mutable copy */
 
 /* Cell type */
 typedef uint64_t cell_t;
