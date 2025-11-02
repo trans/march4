@@ -83,6 +83,7 @@ extern void op_array_length(void);
 extern void op_str_length(void);
 extern void op_mut(void);
 extern void op_array_at(void);
+extern void op_array_set(void);
 
 /* ============================================================================ */
 /* Primitive Dispatch Table */

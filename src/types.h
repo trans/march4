@@ -84,6 +84,7 @@
 #define PRIM_STR_LEN    49   /* str-length - get string count */
 #define PRIM_MUT        50   /* mut - create mutable copy */
 #define PRIM_ARRAY_AT   51   /* march.array.at - read array element */
+#define PRIM_ARRAY_SET  52   /* march.array.set! - write array element */
 
 /* Cell type */
 typedef uint64_t cell_t;
