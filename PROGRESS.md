@@ -1,13 +1,63 @@
 # March Language - Working Features Summary
 
-**Current Status (2025-11-02):** Implemented mutable type system with `array!` and `str!` types! Arrays are now usable with `march.array.at` for indexing. Type system enforces immutability while allowing controlled mutation. 53 primitives total. Clean separation: Database = persistent code/literals, Loader = runtime cache, Heap = mutable runtime data.
+**Current Status (2025-11-02):** Arrays are fully functional! Namespaced primitives (march.array.*) provide length, indexing, and mutation. Type system enforces immutability (`array`) vs mutability (`array!`). 54 primitives total. Clean separation: Database = persistent code/literals, Loader = runtime cache, Heap = mutable runtime data.
+
+---
+
+  ✅ 17. Array Mutation & Namespacing - COMPLETE!
+
+  Date: 2025-11-02
+  Status: ✅ Complete | TODO: high-level 'at' dispatch, string operations
+
+  **Problem:** Arrays could be read but not modified. Naming inconsistency between primitives.
+
+  **Solution:** Implemented `march.array.set!` for mutation and renamed `array-length` to `march.array.length` for consistency.
+
+  **Namespacing Convention:**
+  - All array primitives now use `march.array.*` namespace
+  - `march.array.length` - get array count
+  - `march.array.at` - read element by index
+  - `march.array.set!` - write element by index (requires array!)
+  - Reserves clean names (like `at`) for future high-level type dispatch
+
+  **Implementation (march.array.set!):**
+  - Signature: `array! i64 i64 ->` (REQUIRES mutable array!)
+  - Type system enforces `array!` - will not accept immutable `array`
+  - Bounds checking: silently ignores out-of-bounds writes
+  - Calculates element offset: `32 + (index * 8)`
+  - Mutates array in-place (no copy)
+
+  **New Primitives (54 total):**
+  - `march.array.set!` (PRIM_ARRAY_SET, 52) - Write array element by index
+  - Renamed: `array-length` → `march.array.length`
+
+  **Usage Example:**
+  ```march
+  [ 10 20 30 ]                ( Create immutable array )
+  mut                          ( Make mutable copy: array! )
+  dup 0 100 march.array.set!  ( Modify index 0 to 100 )
+  dup 1 200 march.array.set!  ( Modify index 1 to 200 )
+  dup 0 march.array.at        ( Read back: 100 )
+  dup march.array.length      ( Get length: 3 )
+  ```
+
+  **Type Safety:**
+  ```march
+  [ 10 20 30 ] 0 100 march.array.set!  ( ERROR: requires array!, got array )
+  [ 10 20 30 ] mut 0 100 march.array.set!  ( OK: array! is mutable )
+  ```
+
+  **Files Modified:**
+  - `kernel/x86-64/array-set.asm` - Assembly implementation
+  - `src/types.h` - Added PRIM_ARRAY_SET (52)
+  - `src/primitives.h/c` - Renamed array-length, registered array.set!
 
 ---
 
   ✅ 16. Array Indexing Primitive - COMPLETE!
 
   Date: 2025-11-02
-  Status: ✅ Complete | TODO: array-set! for mutation, high-level 'at' dispatch
+  Status: ✅ Complete
 
   **Problem:** Arrays could be created but not read! No way to access individual elements.
 
