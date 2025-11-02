@@ -17,11 +17,12 @@
   - All array primitives now use `march.array.*` namespace
   - `march.array.length` - get array count
   - `march.array.at` - read element by index
-  - `march.array.set!` - write element by index (requires array!)
+  - `march.array.set!` - write element by index (requires array!, returns array!)
   - Reserves clean names (like `at`) for future high-level type dispatch
 
   **Implementation (march.array.set!):**
-  - Signature: `array! i64 i64 ->` (REQUIRES mutable array!)
+  - Signature: `array! i64 i64 -> array!` (REQUIRES mutable array!)
+  - Returns array pointer for easy chaining of operations
   - Type system enforces `array!` - will not accept immutable `array`
   - Bounds checking: silently ignores out-of-bounds writes
   - Calculates element offset: `32 + (index * 8)`
@@ -34,11 +35,12 @@
   **Usage Example:**
   ```march
   [ 10 20 30 ]                ( Create immutable array )
-  mut                          ( Make mutable copy: array! )
-  dup 0 100 march.array.set!  ( Modify index 0 to 100 )
-  dup 1 200 march.array.set!  ( Modify index 1 to 200 )
-  dup 0 march.array.at        ( Read back: 100 )
-  dup march.array.length      ( Get length: 3 )
+  mut                         ( Make mutable copy: array! )
+  0 100 march.array.set!     ( Modify index 0, returns array! )
+  1 200 march.array.set!     ( Modify index 1, returns array! )
+  2 300 march.array.set!     ( Modify index 2, returns array! )
+  dup 0 march.array.at       ( Read back: 100 )
+  march.array.length         ( Get length: 3 )
   ```
 
   **Type Safety:**

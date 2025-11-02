@@ -1,5 +1,6 @@
-; march.array.set! ( array! index value -- )
+; march.array.set! ( array! index value -- array! )
 ; Write value to array at index (mutates array in-place)
+; Returns the array pointer for chaining operations
 ; Requires mutable array (array!), performs bounds checking
 
 section .text
@@ -34,13 +35,14 @@ op_array_set:
     ; Write value to array at offset
     mov [rax + r9], r8      ; array[index] = value
 
-    ; Pop all three arguments from stack
-    add rsi, 24             ; Pop value, index, array (3 * 8 bytes)
+    ; Pop index and value, leave array on stack
+    add rsi, 16             ; Pop value and index (2 * 8 bytes)
+    ; array_ptr is already at [rsi] (unchanged)
 
     jmp vm_dispatch
 
 .bounds_error:
     ; For now, just ignore the write on bounds error
     ; TODO: Proper error handling
-    add rsi, 24             ; Pop value, index, array
+    add rsi, 16             ; Pop value and index, leave array
     jmp vm_dispatch
