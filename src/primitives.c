@@ -63,6 +63,7 @@ void* primitive_dispatch_table[256] = {
     [PRIM_ARRAY_LEN] = &op_array_length,
     [PRIM_STR_LEN]  = &op_str_length,
     [PRIM_MUT]      = &op_mut,
+    [PRIM_ARRAY_AT] = &op_array_at,
 };
 
 /* ============================================================================ */
@@ -152,6 +153,7 @@ void register_primitives(dictionary_t* dict) {
     REG_PRIM("array-length", PRIM_ARRAY_LEN, op_array_length, "array -> i64");  /* Also accepts array! */
     REG_PRIM("str-length", PRIM_STR_LEN, op_str_length, "str -> i64");  /* Also accepts str! */
     REG_PRIM("mut", PRIM_MUT, op_mut, "array -> array!");  /* Also works with str -> str! */
+    REG_PRIM("march.array.at", PRIM_ARRAY_AT, op_array_at, "array i64 -> i64");  /* Also accepts array! */
 }
 
 #undef REG_PRIM

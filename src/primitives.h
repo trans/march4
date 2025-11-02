@@ -82,6 +82,7 @@ extern void op_memcpy(void);
 extern void op_array_length(void);
 extern void op_str_length(void);
 extern void op_mut(void);
+extern void op_array_at(void);
 
 /* ============================================================================ */
 /* Primitive Dispatch Table */
