@@ -437,8 +437,15 @@ static bool apply_signature(compiler_t* comp, type_sig_t* sig) {
                 return false;
             }
         } else if (expected != TYPE_ANY && actual != TYPE_ANY && expected != actual) {
-            fprintf(stderr, "Type mismatch: expected %d, got %d\n", expected, actual);
-            return false;
+            /* Allow mutable variant where immutable is expected (for read-only ops) */
+            bool compatible = false;
+            if (expected == TYPE_ARRAY && actual == TYPE_ARRAY_MUT) compatible = true;
+            if (expected == TYPE_STR && actual == TYPE_STR_MUT) compatible = true;
+
+            if (!compatible) {
+                fprintf(stderr, "Type mismatch: expected %d, got %d\n", expected, actual);
+                return false;
+            }
         }
     }
 

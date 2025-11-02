@@ -149,9 +149,9 @@ void register_primitives(dictionary_t* dict) {
     REG_PRIM("memcpy", PRIM_MEMCPY, op_memcpy, "ptr ptr i64 -> ptr");
 
     /* Array/String operations */
-    REG_PRIM("array-length", PRIM_ARRAY_LEN, op_array_length, "array -> i64");
-    REG_PRIM("str-length", PRIM_STR_LEN, op_str_length, "str -> i64");
-    REG_PRIM("mut", PRIM_MUT, op_mut, "array -> array");
+    REG_PRIM("array-length", PRIM_ARRAY_LEN, op_array_length, "array -> i64");  /* Also accepts array! */
+    REG_PRIM("str-length", PRIM_STR_LEN, op_str_length, "str -> i64");  /* Also accepts str! */
+    REG_PRIM("mut", PRIM_MUT, op_mut, "array -> array!");  /* Also works with str -> str! */
 }
 
 #undef REG_PRIM

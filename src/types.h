@@ -95,8 +95,10 @@ typedef enum {
     TYPE_F64,      /* 64-bit float */
     TYPE_PTR,      /* Pointer/address */
     TYPE_BOOL,     /* Boolean */
-    TYPE_STR,      /* String reference (CID) */
-    TYPE_ARRAY,    /* Array reference (homogeneous elements) */
+    TYPE_STR,      /* String reference (immutable) */
+    TYPE_STR_MUT,  /* Mutable string reference */
+    TYPE_ARRAY,    /* Array reference (immutable by convention) */
+    TYPE_ARRAY_MUT,/* Mutable array reference */
     TYPE_ANY,      /* Polymorphic type variable */
     /* Type variables (single-letter names: a, b, c, ...) */
     TYPE_VAR_A, TYPE_VAR_B, TYPE_VAR_C, TYPE_VAR_D, TYPE_VAR_E,
