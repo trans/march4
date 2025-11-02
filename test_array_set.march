@@ -1,0 +1,25 @@
+: test-array-set
+  ( Create an array )
+  [ 10 20 30 ]
+
+  ( Make a mutable copy )
+  mut
+
+  ( Stack: array! )
+  ( Modify elements )
+  dup 0 100 march.array.mut.set  ( Set index 0 to 100 )
+  dup 1 200 march.array.mut.set  ( Set index 1 to 200 )
+  dup 2 300 march.array.mut.set  ( Set index 2 to 300 )
+
+  ( Stack: array! )
+  ( Read back modified values )
+  dup 0 march.array.at  ( Should be 100 )
+  dup 1 march.array.at  ( Should be 200 )
+  dup 2 march.array.at  ( Should be 300 )
+
+  ( Stack: array! 100 200 300 )
+  ( Clean up )
+  drop drop drop drop
+;
+
+: main test-array-set ;

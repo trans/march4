@@ -1,0 +1,40 @@
+: test-fill
+  ( Test fill! )
+  [ 1 2 3 4 5 ] mut
+  99 march.array.mut.fill
+  ( All elements should now be 99 )
+  dup 0 march.array.at  ( Should be 99 )
+  dup 2 march.array.at  ( Should be 99 )
+  dup 4 march.array.at  ( Should be 99 )
+  drop drop drop drop
+;
+
+: test-reverse
+  ( Test reverse! )
+  [ 10 20 30 40 50 ] mut
+  march.array.mut.reverse
+  ( Should be: 50 40 30 20 10 )
+  dup 0 march.array.at  ( Should be 50 )
+  dup 2 march.array.at  ( Should be 30 )
+  dup 4 march.array.at  ( Should be 10 )
+  drop drop drop drop
+;
+
+: test-concat
+  ( Test concat )
+  [ 1 2 3 ]
+  [ 4 5 6 ]
+  march.array.concat
+  ( Should be: [ 1 2 3 4 5 6 ] )
+  dup march.array.length    ( Should be 6 )
+  dup 0 march.array.at      ( Should be 1 )
+  dup 3 march.array.at      ( Should be 4 )
+  dup 5 march.array.at      ( Should be 6 )
+  drop drop drop drop drop
+;
+
+: main
+  test-fill
+  test-reverse
+  test-concat
+;
