@@ -284,27 +284,27 @@ void compiler_register_primitives(compiler_t* comp) {
 
     /* drop: ( a -- ) */
     parse_type_sig("a ->", &sig);
-    dict_add(comp->dict, "drop", NULL, NULL, 0, &sig, false, true,
+    dict_add(comp->dict, "drop", NULL, NULL, PRIM_DROP, &sig, false, true,
              (immediate_handler_t)compile_drop, NULL);
 
     /* dup: ( a -- a a ) */
     parse_type_sig("a -> a a", &sig);
-    dict_add(comp->dict, "dup", NULL, NULL, 0, &sig, false, true,
+    dict_add(comp->dict, "dup", NULL, NULL, PRIM_DUP, &sig, false, true,
              (immediate_handler_t)compile_dup, NULL);
 
     /* swap: ( a b -- b a ) */
     parse_type_sig("a b -> b a", &sig);
-    dict_add(comp->dict, "swap", NULL, NULL, 0, &sig, false, true,
+    dict_add(comp->dict, "swap", NULL, NULL, PRIM_SWAP, &sig, false, true,
              (immediate_handler_t)compile_swap, NULL);
 
     /* over: ( a b -- a b a ) */
     parse_type_sig("a b -> a b a", &sig);
-    dict_add(comp->dict, "over", NULL, NULL, 0, &sig, false, true,
+    dict_add(comp->dict, "over", NULL, NULL, PRIM_OVER, &sig, false, true,
              (immediate_handler_t)compile_over, NULL);
 
     /* rot: ( a b c -- b c a ) */
     parse_type_sig("a b c -> b c a", &sig);
-    dict_add(comp->dict, "rot", NULL, NULL, 0, &sig, false, true,
+    dict_add(comp->dict, "rot", NULL, NULL, PRIM_ROT, &sig, false, true,
              (immediate_handler_t)compile_rot, NULL);
 
     debug_dump_dict_stats(comp->dict);
