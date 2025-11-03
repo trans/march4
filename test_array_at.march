@@ -1,0 +1,20 @@
+: test-array-at
+  ( Create an array with some values )
+  [ 10 20 30 40 50 ]
+
+  ( Test reading different indices )
+  ( Stack: array )
+
+  dup 0 march.array.at ( Read index 0 - should be 10 )
+  dup 2 march.array.at ( Read index 2 - should be 30 )
+  dup 4 march.array.at ( Read index 4 - should be 50 )
+
+  ( Test length )
+  dup march.array.length ( Should be 5 )
+
+  ( Stack should be: array 10 30 50 5 )
+  ( Clean up )
+  drop drop drop drop drop
+;
+
+: main test-array-at ;

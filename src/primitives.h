@@ -88,6 +88,14 @@ extern void op_array_fill(void);
 extern void op_array_reverse(void);
 extern void op_array_concat(void);
 
+/* Map operations (HAMT - persistent hash maps) */
+extern void op_map_new(void);
+extern void op_map_get(void);
+extern void op_map_set(void);
+extern void op_map_remove(void);
+extern void op_map_size(void);
+extern void op_map_free(void);
+
 /* ============================================================================ */
 /* Primitive Dispatch Table */
 /* ============================================================================ */

@@ -1,0 +1,27 @@
+: test-mut
+  ( Create an array )
+  [ 10 20 30 ]
+
+  ( Make a mutable copy )
+  dup mut
+
+  ( Both arrays should be on stack )
+  ( original_ptr copy_ptr )
+
+  ( Check that pointers are different )
+  ( dup would make: original_ptr copy_ptr copy_ptr )
+  ( Then swap would make: original_ptr copy_ptr copy_ptr )
+  swap over
+  ( Stack: copy_ptr original_ptr copy_ptr )
+
+  ( Check lengths are the same )
+  array-length
+  ( Stack: copy_ptr original_ptr copy_len )
+  swap array-length
+  ( Stack: copy_ptr copy_len orig_len )
+
+  ( Both should be 3 )
+  drop drop drop
+;
+
+: main test-mut ;

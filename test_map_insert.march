@@ -1,0 +1,9 @@
+: test-insert
+  march.map.new
+  10 100 march.map.set
+  20 200 march.map.set
+  dup march.map.size
+  dup 20 march.map.get
+;
+
+: main test-insert ;

@@ -1,0 +1,15 @@
+: test-types
+  ( Create an immutable array )
+  [ 10 20 30 ]
+
+  ( Make a mutable copy - should have type array! )
+  mut
+
+  ( Get length of mutable array - should work )
+  array-length
+
+  ( Clean up )
+  drop drop
+;
+
+: main test-types ;

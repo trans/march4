@@ -1,0 +1,6 @@
+: test-simple
+  march.map.new
+  dup march.map.size
+;
+
+: main test-simple ;

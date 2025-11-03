@@ -89,6 +89,14 @@
 #define PRIM_ARRAY_REV  54   /* march.array.reverse! - reverse in place */
 #define PRIM_ARRAY_CONCAT 55 /* march.array.concat - concatenate arrays */
 
+/* Map operations (HAMT - persistent hash maps) */
+#define PRIM_MAP_NEW    56   /* march.map.new - create empty map */
+#define PRIM_MAP_GET    57   /* march.map.get - lookup value by key */
+#define PRIM_MAP_SET    58   /* march.map.set - insert/update key-value */
+#define PRIM_MAP_REMOVE 59   /* march.map.remove - delete key */
+#define PRIM_MAP_SIZE   60   /* march.map.size - get element count */
+#define PRIM_MAP_FREE   61   /* march.map.free - free map memory */
+
 /* Cell type */
 typedef uint64_t cell_t;
 

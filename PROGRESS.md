@@ -1,13 +1,61 @@
 # March Language - Working Features Summary
 
-**Current Status (2025-11-02):** Arrays are production-ready! Complete array API with fill, reverse, concat operations. Namespaced primitives (march.array.*) provide comprehensive manipulation. Type system enforces immutability (`array`) vs mutability (`array!`). 57 primitives total. Clean separation: Database = persistent code/literals, Loader = runtime cache, Heap = mutable runtime data.
+**Current Status (2025-11-02):** Arrays are production-ready! Complete array API with explicit namespacing (march.array.mut.* for mutation). Type system enforces immutability (`array`) vs mutability (`array!`). 57 primitives total. Architecture ready for persistent immutable data structures. Clean separation: Database = persistent code/literals, Loader = runtime cache, Heap = mutable runtime data.
+
+---
+
+  ✅ 19. Explicit Namespacing for Mutable/Immutable Operations - COMPLETE!
+
+  Date: 2025-11-02
+  Status: ✅ Complete | TODO: persistent data structures (im-rs FFI or C library)
+
+  **Problem:** Array operations used `!` suffix convention (e.g., `march.array.set!`) which didn't clearly separate mutable vs immutable variants. Need clear separation for future persistent immutable structures.
+
+  **Solution:** Adopted explicit namespacing: `march.array.mut.*` for mutable operations, reserving `march.array.imm.*` for future persistent immutable structures.
+
+  **Naming Changes:**
+  - `march.array.set!` → `march.array.mut.set`
+  - `march.array.fill!` → `march.array.mut.fill`
+  - `march.array.reverse!` → `march.array.mut.reverse`
+
+  **Namespace Architecture:**
+  - `march.array.*` - Common operations (length, at, concat)
+  - `march.array.mut.*` - Mutable operations (in-place mutation, requires `array!`)
+  - `march.array.imm.*` - Reserved for persistent immutable operations (future)
+  - Future: High-level overloaded primitives (dispatch on type)
+
+  **Rationale:**
+  1. **Explicit intent:** Clear separation between mutation and immutability
+  2. **Architecture ready:** Namespace reserved for true persistent structures
+  3. **No naive copy-on-write:** Avoids inefficient O(n) fake immutability
+  4. **Testing clarity:** Can test mutable and immutable variants side-by-side
+  5. **Future overloading:** Reserves clean names like `set`, `fill`, `reverse`
+
+  **Design Decision - Persistent Structures:**
+  - Current `array` type: simple, semantically immutable by convention
+  - `array!` type: mutable with in-place operations
+  - Future `march.array.imm.*`: true persistent data structures
+    - Options: Rust `im-rs` (already in dependencies) via FFI
+    - Or: C library (Immer, custom implementation)
+    - Will use structural sharing (RRB-trees, HAMT)
+    - O(log n) operations, not O(n) naive copies
+
+  **Updated Test Files:**
+  - All tests updated to use `march.array.mut.*` naming
+  - All tests passing with new names
+
+  **Files Modified:**
+  - `src/primitives.c` - Renamed registrations
+  - `test_array_set.march` - Updated to new names
+  - `test_array_chaining.march` - Updated to new names
+  - `test_array_ops.march` - Updated to new names
 
 ---
 
   ✅ 18. Array Fill, Reverse, and Concat - COMPLETE!
 
   Date: 2025-11-02
-  Status: ✅ Complete | TODO: high-level 'at' dispatch, string operations
+  Status: ✅ Complete
 
   **Problem:** Arrays had basic operations but lacked utilities for common transformations like filling, reversing, and combining.
 

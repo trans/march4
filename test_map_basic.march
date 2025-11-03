@@ -1,0 +1,22 @@
+-- Test basic map operations
+: test-map-basic
+  march.map.new
+  10 100 march.map.set
+  20 200 march.map.set
+  30 300 march.map.set
+
+  dup march.map.size
+  dup 20 march.map.get
+
+  30 march.map.remove
+
+  dup march.map.size
+  dup 30 march.map.get
+  dup 10 march.map.get
+
+  march.map.free
+
+  -- Stack should have: 3 200 2 0 100
+;
+
+: main test-map-basic ;

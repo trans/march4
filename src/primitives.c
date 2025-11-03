@@ -68,6 +68,12 @@ void* primitive_dispatch_table[256] = {
     [PRIM_ARRAY_FILL] = &op_array_fill,
     [PRIM_ARRAY_REV] = &op_array_reverse,
     [PRIM_ARRAY_CONCAT] = &op_array_concat,
+    [PRIM_MAP_NEW] = &op_map_new,
+    [PRIM_MAP_GET] = &op_map_get,
+    [PRIM_MAP_SET] = &op_map_set,
+    [PRIM_MAP_REMOVE] = &op_map_remove,
+    [PRIM_MAP_SIZE] = &op_map_size,
+    [PRIM_MAP_FREE] = &op_map_free,
 };
 
 /* ============================================================================ */
@@ -166,6 +172,15 @@ void register_primitives(dictionary_t* dict) {
 
     /* Immutable array operations */
     REG_PRIM("march.array.concat", PRIM_ARRAY_CONCAT, op_array_concat, "array array -> array");  /* Concatenate */
+
+    /* Map operations (HAMT - persistent hash maps) */
+    /* Note: maps are i64 pointers, not a separate type */
+    REG_PRIM("march.map.new", PRIM_MAP_NEW, op_map_new, "-> i64");
+    REG_PRIM("march.map.get", PRIM_MAP_GET, op_map_get, "i64 i64 -> i64");
+    REG_PRIM("march.map.set", PRIM_MAP_SET, op_map_set, "i64 i64 i64 -> i64");
+    REG_PRIM("march.map.remove", PRIM_MAP_REMOVE, op_map_remove, "i64 i64 -> i64");
+    REG_PRIM("march.map.size", PRIM_MAP_SIZE, op_map_size, "i64 -> i64");
+    REG_PRIM("march.map.free", PRIM_MAP_FREE, op_map_free, "i64 ->");
 }
 
 #undef REG_PRIM

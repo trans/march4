@@ -1,0 +1,28 @@
+( Test march.map operations )
+
+( Create empty map )
+march.map.new
+
+( Insert some key-value pairs )
+( map key value -- map' )
+10 100 march.map.set
+20 200 march.map.set
+30 300 march.map.set
+
+( Get the size )
+dup march.map.size .   ( Should print 3 )
+
+( Look up a value )
+dup 20 march.map.get . ( Should print 200 )
+
+( Remove a key )
+30 march.map.remove
+
+( Check size again )
+dup march.map.size .   ( Should print 2 )
+
+( Look up removed key )
+dup 30 march.map.get . ( Should print 0 - not found )
+
+( Clean up )
+march.map.free

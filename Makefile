@@ -17,6 +17,7 @@ LDFLAGS = -no-pie
 KERNEL_DIR = kernel/x86-64
 RUNTIME_DIR = runtime
 BUILD_DIR = build
+SRC_DIR = src
 
 # Rust runtime library
 RUNTIME_LIB = $(RUNTIME_DIR)/target/release/libmarch_runtime.a
@@ -25,6 +26,11 @@ RUNTIME_LIB = $(RUNTIME_DIR)/target/release/libmarch_runtime.a
 ASM_SOURCES = $(wildcard $(KERNEL_DIR)/*.asm)
 ASM_OBJECTS = $(patsubst $(KERNEL_DIR)/%.asm,$(BUILD_DIR)/%.o,$(ASM_SOURCES))
 ASM_PIC_OBJECTS = $(patsubst $(KERNEL_DIR)/%.asm,$(BUILD_DIR)/%-pic.o,$(ASM_SOURCES))
+
+# C source files (HAMT implementation)
+C_SOURCES = $(SRC_DIR)/hamt.c
+C_OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES))
+C_PIC_OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%-pic.o,$(C_SOURCES))
 
 # Targets
 TEST_PROGRAM = $(BUILD_DIR)/test_vm
@@ -37,9 +43,9 @@ all: dirs runtime $(TEST_PROGRAM) vmlib
 # Build VM static library for OCaml FFI (with PIC)
 vmlib: $(VM_LIB)
 
-$(VM_LIB): $(ASM_PIC_OBJECTS)
+$(VM_LIB): $(ASM_PIC_OBJECTS) $(C_PIC_OBJECTS)
 	@echo "Creating VM static library (PIC)..."
-	@ar rcs $@ $(ASM_PIC_OBJECTS)
+	@ar rcs $@ $(ASM_PIC_OBJECTS) $(C_PIC_OBJECTS)
 	@echo "Built $@"
 
 dirs:
@@ -55,6 +61,16 @@ $(BUILD_DIR)/%-pic.o: $(KERNEL_DIR)/%.asm
 	@echo "Assembling $< (PIC)..."
 	@$(NASM) $(NASMFLAGS_PIC) $< -o $@
 
+# Compile C source files
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+	@echo "Compiling $<..."
+	@$(CC) $(CFLAGS) -I$(SRC_DIR) -c $< -o $@
+
+# Compile C source files with PIC
+$(BUILD_DIR)/%-pic.o: $(SRC_DIR)/%.c
+	@echo "Compiling $< (PIC)..."
+	@$(CC) $(CFLAGS) -fPIC -I$(SRC_DIR) -c $< -o $@
+
 # Compile C test program
 $(BUILD_DIR)/test_vm.o: test_vm.c
 	@echo "Compiling $<..."
@@ -68,9 +84,9 @@ $(RUNTIME_LIB):
 	@cd $(RUNTIME_DIR) && $(CARGO) build --release
 
 # Link everything together (without runtime for now - not needed for VM tests)
-$(TEST_PROGRAM): $(BUILD_DIR)/test_vm.o $(ASM_OBJECTS)
+$(TEST_PROGRAM): $(BUILD_DIR)/test_vm.o $(ASM_OBJECTS) $(C_OBJECTS)
 	@echo "Linking $@..."
-	@$(LD) $(LDFLAGS) $(BUILD_DIR)/test_vm.o $(ASM_OBJECTS) -o $@
+	@$(LD) $(LDFLAGS) $(BUILD_DIR)/test_vm.o $(ASM_OBJECTS) $(C_OBJECTS) -o $@
 	@echo "Build complete: $@"
 
 # Run tests
