@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Debug categories (can be enabled/disabled independently) */
 typedef enum {
@@ -80,5 +81,39 @@ void crash_context_set_file(const char* file);
 void crash_context_set_word(const char* word);
 void crash_context_set_token(const char* token);
 void crash_context_set_stacks(int type_depth, int quot_depth, int buffer_depth);
+
+/* ============================================================================ */
+/* Runtime Trace Stack - Execution trace for debugging */
+/* ============================================================================ */
+
+#define MAX_TRACE_DEPTH 256
+#define MAX_TRACE_MSG 128
+
+/* Trace stack entry */
+typedef struct {
+    char message[MAX_TRACE_MSG];  /* Trace message */
+    uint64_t data_value;          /* Optional data value */
+} trace_entry_t;
+
+/* Global trace stack */
+extern trace_entry_t trace_stack[MAX_TRACE_DEPTH];
+extern int trace_stack_depth;
+extern bool trace_enabled;
+
+/* Initialize trace system (checks MARCH_TRACE env var) */
+void trace_init(void);
+
+/* Push trace message (with optional data value) */
+void trace_push(const char* fmt, ...);
+void trace_push_value(uint64_t value, const char* fmt, ...);
+
+/* Pop trace message */
+void trace_pop(void);
+
+/* Clear trace stack */
+void trace_clear(void);
+
+/* Dump trace stack (called on crash) */
+void trace_dump(void);
 
 #endif /* MARCH_DEBUG_H */

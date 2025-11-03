@@ -27,8 +27,8 @@ ASM_SOURCES = $(wildcard $(KERNEL_DIR)/*.asm)
 ASM_OBJECTS = $(patsubst $(KERNEL_DIR)/%.asm,$(BUILD_DIR)/%.o,$(ASM_SOURCES))
 ASM_PIC_OBJECTS = $(patsubst $(KERNEL_DIR)/%.asm,$(BUILD_DIR)/%-pic.o,$(ASM_SOURCES))
 
-# C source files (HAMT implementation)
-C_SOURCES = $(SRC_DIR)/hamt.c
+# C source files (HAMT implementation and debug support)
+C_SOURCES = $(SRC_DIR)/hamt.c $(SRC_DIR)/debug.c
 C_OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES))
 C_PIC_OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%-pic.o,$(C_SOURCES))
 

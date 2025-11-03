@@ -58,6 +58,7 @@ int main(int argc, char** argv) {
 
     /* Initialize debug system from environment */
     debug_init();
+    trace_init();
 
     /* Parse options */
     while ((opt = getopt(argc, argv, "o:r:d:vsh")) != -1) {

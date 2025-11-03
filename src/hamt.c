@@ -1,4 +1,5 @@
 #include "hamt.h"
+#include "debug.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -93,14 +94,23 @@ static void* hamt_clone_node(void* node) {
 // ============================================================================
 
 void* hamt_new(void) {
+    trace_push("hamt_new()");
     // Lazy allocation - return NULL, first insert will create root
     return NULL;
 }
 
 uint64_t hamt_size(void* node) {
-    if (!node) return 0;
+    trace_push_value((uint64_t)node, "hamt_size(node=%p)", node);
+    if (!node) {
+        trace_pop(); // hamt_size
+        return 0;
+    }
     hamt_header_t* header = hamt_get_header(node);
-    return header->count;
+    uint64_t size = header->count;
+    trace_push_value(size, "hamt_size: returning %lu", size);
+    trace_pop(); // returning
+    trace_pop(); // hamt_size
+    return size;
 }
 
 // ============================================================================
@@ -108,7 +118,14 @@ uint64_t hamt_size(void* node) {
 // ============================================================================
 
 uint64_t hamt_get(void* node, uint64_t key) {
-    if (!node) return 0;  // Empty map
+    trace_push_value(key, "hamt_get(node=%p, key=%lu)", node, key);
+
+    if (!node) {
+        trace_push("hamt_get: empty map, returning 0");
+        trace_pop(); // hamt_get: empty map
+        trace_pop(); // hamt_get
+        return 0;  // Empty map
+    }
 
     uint64_t hash = hamt_hash(key);
     int level = 0;
@@ -135,18 +152,30 @@ uint64_t hamt_get(void* node, uint64_t key) {
         if (hamt_is_value((void*)slot->value)) {
             // This slot is a leaf - compare keys
             if (slot->key == key) {
-                return hamt_untag_value((void*)slot->value);
+                uint64_t result = hamt_untag_value((void*)slot->value);
+                trace_push_value(result, "hamt_get: found value=%lu", result);
+                trace_pop(); // found value
+                trace_pop(); // hamt_get
+                return result;
             } else {
                 // Key mismatch at leaf
+                trace_push("hamt_get: key mismatch at leaf, returning 0");
+                trace_pop(); // key mismatch
+                trace_pop(); // hamt_get
                 return 0;
             }
         }
 
         // This slot is a branch - descend to child
+        trace_push_value(level, "hamt_get: descending to level %d", level + 1);
+        trace_pop(); // descending
         node = (void*)slot->value;
         level++;
     }
 
+    trace_push("hamt_get: not found, returning 0");
+    trace_pop(); // not found
+    trace_pop(); // hamt_get
     return 0;  // Not found
 }
 
@@ -159,9 +188,15 @@ static void* hamt_set_impl(void* node, uint64_t key, uint64_t value,
                           uint64_t hash, int level, bool* inserted);
 
 void* hamt_set(void* node, uint64_t key, uint64_t value) {
+    trace_push_value(key, "hamt_set(node=%p, key=%lu, value=%lu)", node, key, value);
+
     bool inserted = false;
     uint64_t hash = hamt_hash(key);
-    return hamt_set_impl(node, key, value, hash, 0, &inserted);
+    void* result = hamt_set_impl(node, key, value, hash, 0, &inserted);
+    trace_push_value((uint64_t)result, "hamt_set: returning node=%p", result);
+    trace_pop(); // returning
+    trace_pop(); // hamt_set
+    return result;
 }
 
 static void* hamt_set_impl(void* node, uint64_t key, uint64_t value,

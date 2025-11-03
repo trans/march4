@@ -9,6 +9,7 @@
 #include "dictionary.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <ctype.h>
 #include <signal.h>
 #include <unistd.h>
@@ -178,6 +179,11 @@ static void crash_handler(int sig) {
     fprintf(stderr, "============================================\n");
     fflush(stderr);
 
+    /* Dump runtime trace if enabled */
+    if (trace_enabled && trace_stack_depth > 0) {
+        trace_dump();
+    }
+
     /* Exit immediately to avoid double-crash */
     _exit(139);
 }
@@ -218,4 +224,99 @@ void crash_context_set_stacks(int type_depth, int quot_depth, int buffer_depth) 
     crash_context.type_stack_depth = type_depth;
     crash_context.quot_stack_depth = quot_depth;
     crash_context.buffer_stack_depth = buffer_depth;
+}
+
+/* ============================================================================ */
+/* Runtime Trace Stack */
+/* ============================================================================ */
+
+/* Global trace stack */
+trace_entry_t trace_stack[MAX_TRACE_DEPTH];
+int trace_stack_depth = 0;
+bool trace_enabled = false;
+
+/* Initialize trace system */
+void trace_init(void) {
+    const char* env = getenv("MARCH_TRACE");
+    if (env && (strcmp(env, "1") == 0 || strcmp(env, "true") == 0)) {
+        trace_enabled = true;
+        fprintf(stderr, "[TRACE] Runtime trace enabled\n");
+    }
+}
+
+/* Push trace message */
+void trace_push(const char* fmt, ...) {
+    if (!trace_enabled) return;
+    if (trace_stack_depth >= MAX_TRACE_DEPTH) {
+        /* Shift stack down if full */
+        memmove(&trace_stack[0], &trace_stack[1],
+                (MAX_TRACE_DEPTH - 1) * sizeof(trace_entry_t));
+        trace_stack_depth = MAX_TRACE_DEPTH - 1;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(trace_stack[trace_stack_depth].message, MAX_TRACE_MSG, fmt, args);
+    va_end(args);
+
+    trace_stack[trace_stack_depth].data_value = 0;
+    trace_stack_depth++;
+}
+
+/* Push trace message with data value */
+void trace_push_value(uint64_t value, const char* fmt, ...) {
+    if (!trace_enabled) return;
+    if (trace_stack_depth >= MAX_TRACE_DEPTH) {
+        /* Shift stack down if full */
+        memmove(&trace_stack[0], &trace_stack[1],
+                (MAX_TRACE_DEPTH - 1) * sizeof(trace_entry_t));
+        trace_stack_depth = MAX_TRACE_DEPTH - 1;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(trace_stack[trace_stack_depth].message, MAX_TRACE_MSG, fmt, args);
+    va_end(args);
+
+    trace_stack[trace_stack_depth].data_value = value;
+    trace_stack_depth++;
+}
+
+/* Pop trace message */
+void trace_pop(void) {
+    if (!trace_enabled) return;
+    if (trace_stack_depth > 0) {
+        trace_stack_depth--;
+    }
+}
+
+/* Clear trace stack */
+void trace_clear(void) {
+    trace_stack_depth = 0;
+}
+
+/* Dump trace stack */
+void trace_dump(void) {
+    if (trace_stack_depth == 0) {
+        fprintf(stderr, "\n[TRACE] No trace entries\n");
+        return;
+    }
+
+    fprintf(stderr, "\n============================================\n");
+    fprintf(stderr, "=== RUNTIME TRACE (last %d operations) ===\n", trace_stack_depth);
+    fprintf(stderr, "============================================\n");
+
+    for (int i = 0; i < trace_stack_depth; i++) {
+        if (trace_stack[i].data_value != 0) {
+            fprintf(stderr, "[%3d] %s (data: %lu / 0x%lx)\n",
+                    i, trace_stack[i].message,
+                    trace_stack[i].data_value,
+                    trace_stack[i].data_value);
+        } else {
+            fprintf(stderr, "[%3d] %s\n", i, trace_stack[i].message);
+        }
+    }
+
+    fprintf(stderr, "============================================\n");
+    fflush(stderr);
 }
