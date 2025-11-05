@@ -1,9 +1,15 @@
 # March Redesign: Direct Threading + FORTH-style Outer Interpreter
 
-** DO NOT ASSUME THE INCLUDED CODE SNIPPETS ARE CORRECT! ***
+# PROGRESS
 
-Core Changes
-                      
+- Language has been moved to direct threded modle.
+- This task is essentially complete.
+
+# Core Changes
+
+** DO NOT ASSUME THE INCLUDED CODE SNIPPETS ARE CORRECT! ***
+** THE FINAL IMPLMENTATION MAY NOT BE EXACTLY AS DESCRIBED BELOW! ***
+
 ## 1. New Cell Encoding (Direct Threaded)
                     
 Current (Indirect/Subroutine):

@@ -1,15 +1,22 @@
 # Quotation Design
 
+THIS DOCUMENT IS PARTIALLY OUT OF DATE.
+
+WE FOUND A WAY TO NOT HAVE TO TYPE QUOTES TO PASS THEM (treat them just like words, which have to be rarfified by the JIT).
+
 ## Overview
 
-March quotations come in two flavors, distinguished by whether they contain **type markers**:
+March quotations are essentially thunks, but they are not closures.
+Thus March quotes compile just like words.
+
+## Syntax
+
+Quotations are (generally) notated with parenthesies `( ... )`.
 
 - **Lexical quotations**: `( 42 )` - compile-time only, must be consumed in current scope
 - **Typed quotations**: `( _i64 42 )` - can be passed, returned, and stored
 
-## Syntax
-
-### Lexical Quotations (Default)
+### Complete Quotations
 
 ```march
 ( body )
@@ -17,17 +24,17 @@ March quotations come in two flavors, distinguished by whether they contain **ty
 
 **Properties:**
 - Compile-time values on the quotation stack
-- Must be consumed by an immediate word (`if`, `map`, `each`, etc.)
-- Cannot leave their defining scope
-- **Zero runtime cost** - completely inlined
-- No type markers needed
+- Can be consumed by an immediate words (`if`, `map`, `each`, etc.)
+- If immediate word's arguments are *complete* (within the scope of a word), then:
+  - **Zero runtime cost** - completely inlined
+- No type markers needed.
 
 **Examples:**
 ```march
 : choose
     condition
-    ( handle-true )      -- Lexical
-    ( handle-false )     -- Lexical
+    ( handle-true )
+    ( handle-false )
     if                   -- Consumes both
 ;
 
@@ -36,22 +43,36 @@ March quotations come in two flavors, distinguished by whether they contain **ty
 ;
 ```
 
-### Typed Quotations
+### Incomplete Quotations
+
+Quotations that flow through word boundries, as inputs and outputs,
+are *compiled* and *called* by the runtime just like words,
+only they are annonymous words.
+
+```march
+: ifitisso ( body ) if ;
+```
+
+The above example needs a boolean and another quotation to complete it's expected parameters,
+so it can not inline the quotation.
+
+Quotations can be made concrete by the programmer by providing type signatures, notated with underscores.
+There allow the quotes to fully lowered by the compiler regardless of how it used.
 
 ```march
 ( _type1 _type2 ... body )
 ```
 
 **Properties:**
-- Input types declared with `_type` markers
-- Output types automatically inferred from body
 - Can be passed to other words
 - Can be returned from words
 - Can be stored in data structures
 - Can be called with `execute`
-- Can still be inlined by immediate words (optimization)
+- Input types declared with `_type` markers
+- Output types automatically inferred from body
+- Possibly can still be inlined sometimes by immediate words (optimization)
 
-**Examples:**
+**Examples of typed quotes:**
 ```march
 : make-doubler
     ( _i64 2 * )         -- Returns typed quotation
@@ -79,13 +100,13 @@ Type markers use underscore prefix: `_typename`
 
 **Type variables (future):**
 - `_a`, `_b`, `_c` - Polymorphic type variables
-- Requires runtime specialization/JIT
+- Requires runtime specialization/JIT (just like words).
 
 **How they work:**
 1. Declare expected input types in order
 2. Compiler validates body against these types
 3. Output types inferred from body compilation
-4. Flag quotation as `QUOT_TYPED` (can escape scope)
+4. Flag quotation as `QUOT_TYPED` (can escape scope unincumbered)
 
 ## Immediate Words and Inlining
 
@@ -93,14 +114,17 @@ Immediate words like `if`, `map`, `each` can **inline** quotation bodies for per
 
 ### Inlining Rules
 
-**Lexical quotations:**
+**Lexical (Complete) quotations:**
 - MUST be inlined (only option - no runtime representation)
 - Zero overhead
 - Body compiled directly into parent word
 
+**Unclosed quotations:**
+- no inlining, compiled as annonymous words
+- CALLED like words
+
 **Typed quotations:**
-- CAN be inlined (optimization)
-- OR can be called via `execute` (flexibility)
+- POSSIBLY CAN be inlined (optimization)
 - Immediate word decides based on:
   - Concrete vs polymorphic types
   - Body complexity
@@ -110,6 +134,14 @@ Immediate words like `if`, `map`, `each` can **inline** quotation bodies for per
 
 ```march
 : double-all
+    array ( 2 * ) map
+;
+```
+
+Typed, but still inlined.
+
+```march
+: double-all-i64
     array ( _i64 2 * ) map
 ;
 ```
@@ -129,6 +161,17 @@ No quotation object created, no indirect call overhead!
 
 ## Compilation Model
 
+Not 100% sure about the following model -- very rough sketch.
+
+### Regular Quotation Flow
+
+```
+1. `(` → Create quotation, push to quot_stack, switch buffers
+2. tokens → Compile into quotation's buffers
+3. `)` → Mark as QUOT_WORD, restore parent buffers
+4. `;` -> Compile quotations on quote stack as if words.
+```
+
 ### Lexical Quotation Flow
 
 ```
@@ -136,7 +179,6 @@ No quotation object created, no indirect call overhead!
 2. tokens → Compile into quotation's buffers
 3. `)` → Mark as QUOT_LEXICAL, restore parent buffers
 4. Immediate word → Pop from quot_stack, inline body
-5. `;` → Error if any QUOT_LEXICAL still on stack
 ```
 
 ### Typed Quotation Flow
@@ -174,28 +216,25 @@ End:     outputs = [i64]
 
 ## Error Cases
 
-### Unconsumed Lexical Quotation
+### Incomplete Quotation
 
 ```march
 : bad
-    ( 42 )               -- ERROR: not consumed
+    ( 42               -- ERROR: quotation not finished
 ;
 ```
 
-**Error:** `Lexical quotation not consumed. Hint: Add type markers like ( _i64 ... ) to make it typed.`
+```march
+: bad
+    42 )               -- ERROR: quotation not started
+;
+```
 
 ### Missing Type Markers for Passable Quotation
 
 ```march
 : return-quot
-    ( 42 )               -- ERROR: can't return lexical quotation
-;
-```
-
-**Fix:** Add type marker:
-```march
-: return-quot
-    ( 42 )               -- Infers input type from stack (if any)
+    ( 42 )               -- compile like a word, essentially an XT is returned
 ;
 ```
 

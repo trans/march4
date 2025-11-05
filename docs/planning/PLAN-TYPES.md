@@ -1,5 +1,11 @@
 # Types
 
+## PROGRESS
+
+- Where are we with all this?
+
+## Plan Considerations
+
 *This is an evolving document*.
 
 ### 1) Plain 0-arg function (baseline)
