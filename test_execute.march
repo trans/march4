@@ -1,6 +1,0 @@
--- Test on-demand execution
-$ a -> a a a ;
-: ddup dup dup ;
-
--- Simple test word
-: test-exec 5 ddup drop drop ;
