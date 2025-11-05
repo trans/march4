@@ -1,8 +1,0 @@
--- Test execute primitive registration
--- Note: Cannot actually test functionality until quotation linking is implemented
-
-: test_execute_compiles
-  -- This will fail to compile if execute is not registered
-  -- (Would need an address on stack to actually call execute)
-  0 drop  -- Just a placeholder
-;
