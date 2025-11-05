@@ -1,0 +1,14 @@
+: test-insert
+  march.map.new
+  10 100 march.map.set
+  20 200 march.map.set
+  -- Stack: [map]
+  dup march.map.size
+  -- Stack: [map size]
+  drop
+  -- Stack: [map]
+  dup 20 march.map.get
+  -- Stack: [map value]
+;
+
+: main test-insert ;

@@ -126,6 +126,7 @@ typedef enum {
 typedef struct {
     type_id_t type;
     int slot_id;  /* -1 = not heap-allocated, >=0 = slot index for heap pointer */
+    uint32_t node_id;  /* Reference graph node ID, 0 = not a heap reference */
 } type_stack_entry_t;
 
 /* Maximum sizes */
@@ -159,5 +160,49 @@ void encode_inline_literal(blob_buffer_t* buf, int64_t value);
 
 /* Blob decoding functions */
 const uint8_t* decode_tag_ex(const uint8_t* ptr, bool* is_cid, uint16_t* id_or_kind, const unsigned char** cid);
+
+/* ============================================================================ */
+/* Reference Graph - Compile-Time Memory Management */
+/* ============================================================================ */
+
+/* Node ID type - 0 is reserved for NODE_ID_INVALID */
+typedef uint32_t node_id_t;
+#define NODE_ID_INVALID 0
+
+/* Reference node - represents a heap-allocated object at compile time */
+typedef struct {
+    node_id_t node_id;           /* Unique identifier for this allocation */
+    type_id_t object_type;       /* TYPE_ARRAY, TYPE_STR, etc. */
+    bool is_escaped;             /* True if escapes (FFI, async, closures) */
+
+    /* Child relationships (for containers like arrays, records) */
+    node_id_t* children;         /* Array of child node IDs */
+    size_t child_count;          /* Number of children */
+    size_t child_capacity;       /* Allocated capacity */
+} ref_node_t;
+
+/* Reference graph - tracks all heap objects for a word during compilation */
+typedef struct {
+    ref_node_t* nodes;           /* Array of all nodes in this graph */
+    size_t node_count;           /* Number of nodes */
+    size_t node_capacity;        /* Allocated capacity */
+
+    node_id_t next_node_id;      /* Next node ID to allocate (starts at 1) */
+
+    /* Quick lookup: node_id -> array index in nodes[] */
+    size_t* node_index;          /* node_index[node_id] = index into nodes[] */
+    size_t node_index_capacity;  /* Allocated capacity for lookup table */
+} ref_graph_t;
+
+/* Reference graph operations */
+ref_graph_t* ref_graph_create(void);
+void ref_graph_free(ref_graph_t* graph);
+void ref_graph_clear(ref_graph_t* graph);
+
+/* Node operations */
+node_id_t ref_graph_alloc_node(ref_graph_t* graph, type_id_t obj_type);
+ref_node_t* ref_graph_get_node(ref_graph_t* graph, node_id_t node_id);
+void ref_graph_add_child(ref_graph_t* graph, node_id_t parent_id, node_id_t child_id);
+void ref_graph_mark_escaped(ref_graph_t* graph, node_id_t node_id);
 
 #endif /* MARCH_TYPES_H */

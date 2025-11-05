@@ -80,6 +80,7 @@ typedef struct compiler {
     int type_stack_depth;
     cell_buffer_t* cells;          /* Legacy: runtime cells (deprecated) */
     blob_buffer_t* blob;           /* CID-based blob encoding (LINKING.md) */
+    ref_graph_t* ref_graph;        /* Reference graph for memory management */
     bool verbose;
 
     /* Compile-time slot allocation (like register allocation for heap ptrs) */

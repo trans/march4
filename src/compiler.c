@@ -41,6 +41,7 @@ compiler_t* compiler_create(dictionary_t* dict, march_db_t* db) {
     comp->type_stack_depth = 0;
     comp->cells = cell_buffer_create();
     comp->blob = blob_buffer_create();  /* CID-based encoding buffer */
+    comp->ref_graph = NULL;  /* Created per-word, not global */
     comp->verbose = false;
     comp->pending_type_sig = NULL;
     comp->quot_stack_depth = 0;
@@ -224,6 +225,10 @@ void compiler_free(compiler_t* comp) {
     if (comp) {
         cell_buffer_free(comp->cells);
         blob_buffer_free(comp->blob);
+        /* Free reference graph if still allocated */
+        if (comp->ref_graph) {
+            ref_graph_free(comp->ref_graph);
+        }
         /* Free pending type signature */
         if (comp->pending_type_sig) {
             free(comp->pending_type_sig);
