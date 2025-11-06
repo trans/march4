@@ -74,11 +74,23 @@ void ref_graph_clear(ref_graph_t* graph) {
 /* Node Operations */
 /* ============================================================================ */
 
-node_id_t ref_graph_alloc_node(ref_graph_t* graph, type_id_t obj_type) {
-    if (!graph) return NODE_ID_INVALID;
+node_id_t ref_graph_alloc_node(ref_graph_t* graph, type_id_t obj_type, int slot_id) {
+    fprintf(stderr, "TRACE: ref_graph_alloc_node(graph=%p, type=%d, slot=%d)\n",
+            (void*)graph, obj_type, slot_id);
+    fflush(stderr);
+
+    if (!graph) {
+        /* Gracefully handle NULL graph (compilation contexts without ref_graph) */
+        fprintf(stderr, "TRACE: ref_graph_alloc_node - NULL graph, returning INVALID\n");
+        fflush(stderr);
+        return NODE_ID_INVALID;
+    }
 
     /* Allocate new node ID */
     node_id_t new_id = graph->next_node_id++;
+    fprintf(stderr, "TRACE: Allocated node_id=%u, will add to graph with %zu existing nodes\n",
+            new_id, graph->node_count);
+    fflush(stderr);
 
     /* Grow node array if needed */
     if (graph->node_count >= graph->node_capacity) {
@@ -114,6 +126,7 @@ node_id_t ref_graph_alloc_node(ref_graph_t* graph, type_id_t obj_type) {
     ref_node_t node = {
         .node_id = new_id,
         .object_type = obj_type,
+        .slot_id = slot_id,
         .is_escaped = false,
         .children = NULL,
         .child_count = 0,
@@ -126,6 +139,10 @@ node_id_t ref_graph_alloc_node(ref_graph_t* graph, type_id_t obj_type) {
 
     /* Update index mapping */
     graph->node_index[new_id] = idx;
+
+    fprintf(stderr, "TRACE: Successfully added node_id=%u at index=%zu, graph now has %zu nodes\n",
+            new_id, idx, graph->node_count);
+    fflush(stderr);
 
     return new_id;
 }

@@ -173,6 +173,7 @@ typedef uint32_t node_id_t;
 typedef struct {
     node_id_t node_id;           /* Unique identifier for this allocation */
     type_id_t object_type;       /* TYPE_ARRAY, TYPE_STR, etc. */
+    int slot_id;                 /* Corresponding slot ID for FREE instruction */
     bool is_escaped;             /* True if escapes (FFI, async, closures) */
 
     /* Child relationships (for containers like arrays, records) */
@@ -200,7 +201,7 @@ void ref_graph_free(ref_graph_t* graph);
 void ref_graph_clear(ref_graph_t* graph);
 
 /* Node operations */
-node_id_t ref_graph_alloc_node(ref_graph_t* graph, type_id_t obj_type);
+node_id_t ref_graph_alloc_node(ref_graph_t* graph, type_id_t obj_type, int slot_id);
 ref_node_t* ref_graph_get_node(ref_graph_t* graph, node_id_t node_id);
 void ref_graph_add_child(ref_graph_t* graph, node_id_t parent_id, node_id_t child_id);
 void ref_graph_mark_escaped(ref_graph_t* graph, node_id_t node_id);

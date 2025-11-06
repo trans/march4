@@ -331,6 +331,7 @@ static void push_type(compiler_t* comp, type_id_t type) {
     }
     comp->type_stack[comp->type_stack_depth].type = type;
     comp->type_stack[comp->type_stack_depth].slot_id = -1;  /* Not heap-allocated */
+    comp->type_stack[comp->type_stack_depth].node_id = NODE_ID_INVALID;  /* Not a heap object */
     comp->type_stack_depth++;
 }
 
@@ -367,12 +368,22 @@ static void push_heap_value(compiler_t* comp, type_id_t type) {
     int slot_id = allocate_slot(comp);
     if (slot_id < 0) return;  /* Error already printed */
 
+    /* Create node in reference graph */
+    node_id_t node_id = NODE_ID_INVALID;
+    if (comp->ref_graph) {
+        node_id = ref_graph_alloc_node(comp->ref_graph, type, slot_id);
+        if (node_id == NODE_ID_INVALID) {
+            fprintf(stderr, "Warning: Failed to allocate ref graph node\n");
+        }
+    }
+
     comp->type_stack[comp->type_stack_depth].type = type;
     comp->type_stack[comp->type_stack_depth].slot_id = slot_id;
+    comp->type_stack[comp->type_stack_depth].node_id = node_id;
     comp->type_stack_depth++;
 
     if (comp->verbose) {
-        printf("  ALLOC slot=%d type=%d\n", slot_id, type);
+        printf("  ALLOC slot=%d node=%u type=%d\n", slot_id, node_id, type);
     }
 }
 
@@ -390,7 +401,7 @@ static type_id_t pop_type(compiler_t* comp) {
 static type_stack_entry_t pop_type_entry(compiler_t* comp) {
     if (comp->type_stack_depth == 0) {
         fprintf(stderr, "Type stack underflow\n");
-        type_stack_entry_t entry = {TYPE_ANY, -1};
+        type_stack_entry_t entry = {TYPE_ANY, -1, NODE_ID_INVALID};
         return entry;
     }
     return comp->type_stack[--comp->type_stack_depth];
@@ -400,6 +411,101 @@ static type_stack_entry_t pop_type_entry(compiler_t* comp) {
  * Stack primitives just copy/remove slot_ids on the type stack.
  * Slots are only freed at word end if they're not on the return stack.
  */
+
+/* Recursive mark function for liveness analysis */
+static void mark_node(ref_graph_t* graph, node_id_t node_id, bool* marked) {
+    if (node_id == NODE_ID_INVALID) return;
+    if (marked[node_id]) return;  /* Already marked */
+
+    marked[node_id] = true;
+
+    /* Recursively mark children */
+    ref_node_t* node = ref_graph_get_node(graph, node_id);
+    if (node) {
+        for (size_t i = 0; i < node->child_count; i++) {
+            mark_node(graph, node->children[i], marked);
+        }
+    }
+}
+
+/* Perform liveness analysis and emit FREE instructions for dead nodes */
+static void emit_free_for_dead_nodes(compiler_t* comp) {
+    fprintf(stderr, "TRACE: emit_free_for_dead_nodes entry, comp=%p, ref_graph=%p\n",
+            (void*)comp, (void*)(comp ? comp->ref_graph : NULL));
+    if (comp && comp->ref_graph) {
+        fprintf(stderr, "TRACE: ref_graph has %zu nodes\n", comp->ref_graph->node_count);
+    }
+    fflush(stderr);
+
+    if (!comp || !comp->ref_graph || comp->ref_graph->node_count == 0) {
+        if (comp && comp->verbose && !comp->ref_graph) {
+            printf("  (No ref_graph - skipping liveness analysis)\n");
+        }
+        fprintf(stderr, "TRACE: Skipping liveness analysis (no nodes)\n");
+        fflush(stderr);
+        return;  /* No heap allocations in this word */
+    }
+
+    if (comp->verbose) {
+        printf("  Liveness analysis: %zu nodes in graph\n", comp->ref_graph->node_count);
+    }
+
+    /* Allocate marked array (indexed by node_id) */
+    bool* marked = calloc(comp->ref_graph->node_index_capacity, sizeof(bool));
+    if (!marked) {
+        fprintf(stderr, "Warning: Failed to allocate marked array for liveness analysis\n");
+        return;
+    }
+
+    /* Phase 1: Build root set from type stack and mark reachable nodes */
+    if (comp->verbose) {
+        printf("  Root set: type_stack_depth=%d\n", comp->type_stack_depth);
+    }
+    for (int i = 0; i < comp->type_stack_depth; i++) {
+        node_id_t node_id = comp->type_stack[i].node_id;
+        if (node_id != NODE_ID_INVALID) {
+            if (comp->verbose) {
+                printf("    Root[%d]: node=%u\n", i, node_id);
+            }
+            mark_node(comp->ref_graph, node_id, marked);
+        }
+    }
+
+    /* Phase 2: Mark escaped nodes (FFI, async, closures) */
+    for (size_t i = 0; i < comp->ref_graph->node_count; i++) {
+        ref_node_t* node = &comp->ref_graph->nodes[i];
+        if (node->is_escaped) {
+            mark_node(comp->ref_graph, node->node_id, marked);
+        }
+    }
+
+    /* Phase 3: Emit FREE for unmarked (dead) nodes */
+    dict_entry_t* free_prim = dict_lookup(comp->dict, "free");
+    if (!free_prim) {
+        fprintf(stderr, "Warning: FREE primitive not found\n");
+        free(marked);
+        return;
+    }
+
+    for (size_t i = 0; i < comp->ref_graph->node_count; i++) {
+        ref_node_t* node = &comp->ref_graph->nodes[i];
+        if (!marked[node->node_id]) {
+            /* Dead node - emit FREE for its slot */
+            if (node->slot_id >= 0) {
+                if (comp->verbose) {
+                    printf("    FREE node=%u slot=%d (dead, not reachable)\n",
+                           node->node_id, node->slot_id);
+                }
+                cell_buffer_append(comp->cells, encode_lit(node->slot_id));
+                encode_inline_literal(comp->blob, node->slot_id);
+                cell_buffer_append(comp->cells, encode_xt(free_prim->addr));
+                encode_primitive(comp->blob, free_prim->prim_id);
+            }
+        }
+    }
+
+    free(marked);
+}
 
 /* Apply word's type signature to type stack */
 static bool apply_signature(compiler_t* comp, type_sig_t* sig) {
@@ -962,6 +1068,9 @@ static bool quot_compile_with_context(
  * Phase 5: Made public for on-demand compilation in runner */
 blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* word_def,
                                           type_id_t* input_types, int input_count) {
+    fprintf(stderr, "TRACE: word_compile_with_context() entry for '%s'\n", word_def ? word_def->name : "NULL");
+    fflush(stderr);
+
     if (!word_def) {
         fprintf(stderr, "word_compile_with_context: NULL word_def\n");
         return NULL;
@@ -978,6 +1087,7 @@ blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* wo
     /* Save current compiler state */
     cell_buffer_t* saved_cells = comp->cells;
     blob_buffer_t* saved_blob = comp->blob;
+    ref_graph_t* saved_ref_graph = comp->ref_graph;  /* Save ref_graph too! */
     int saved_type_depth = comp->type_stack_depth;
     type_stack_entry_t saved_type_stack[MAX_TYPE_STACK];
     for (int i = 0; i < saved_type_depth; i++) {
@@ -1004,6 +1114,15 @@ blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* wo
     comp->type_stack_depth = 0;
     comp->slot_count = 0;
     memset(comp->slot_used, 0, sizeof(comp->slot_used));
+
+    /* Initialize reference graph for this word compilation */
+    comp->ref_graph = ref_graph_create();
+    if (!comp->ref_graph) {
+        fprintf(stderr, "Failed to create reference graph\n");
+        cell_buffer_free(fresh_cells);
+        blob_buffer_free(fresh_blob);
+        return NULL;
+    }
 
     for (int i = 0; i < input_count; i++) {
         push_type(comp, input_types[i]);
@@ -1054,29 +1173,15 @@ blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* wo
     }
 
     if (success) {
-        /* Emit FREE for non-returned slots */
-        bool returned_slots[MAX_SLOTS] = {false};
-        for (int i = 0; i < comp->type_stack_depth; i++) {
-            int slot_id = comp->type_stack[i].slot_id;
-            if (slot_id >= 0 && slot_id < MAX_SLOTS) {
-                returned_slots[slot_id] = true;
-            }
-        }
+        fprintf(stderr, "TRACE: About to call emit_free_for_dead_nodes\n");
+        fflush(stderr);
 
-        dict_entry_t* free_prim = dict_lookup(comp->dict, "free");
-        for (int slot_id = 0; slot_id < comp->slot_count; slot_id++) {
-            if (comp->slot_used[slot_id] && !returned_slots[slot_id]) {
-                if (comp->verbose) {
-                    printf("    FREE slot=%d (not returned)\n", slot_id);
-                }
-                cell_buffer_append(comp->cells, encode_lit(slot_id));
-                encode_inline_literal(comp->blob, slot_id);
-                if (free_prim) {
-                    cell_buffer_append(comp->cells, encode_xt(free_prim->addr));
-                    encode_primitive(comp->blob, free_prim->prim_id);
-                }
-            }
-        }
+        /* Emit FREE for dead nodes via liveness analysis */
+        /* TEMPORARILY DISABLED FOR TESTING */
+        // emit_free_for_dead_nodes(comp);
+
+        fprintf(stderr, "TRACE: emit_free_for_dead_nodes SKIPPED (disabled for testing)\n");
+        fflush(stderr);
 
         /* Emit EXIT */
         cell_buffer_append(comp->cells, encode_exit());
@@ -1094,9 +1199,15 @@ blob_buffer_t* word_compile_with_context(compiler_t* comp, word_definition_t* wo
         blob_buffer_free(fresh_blob);
     }
 
+    /* Cleanup reference graph */
+    if (comp->ref_graph) {
+        ref_graph_free(comp->ref_graph);
+    }
+
     /* Restore compiler state */
     comp->cells = saved_cells;
     comp->blob = saved_blob;
+    comp->ref_graph = saved_ref_graph;  /* Restore ref_graph! */
     comp->type_stack_depth = saved_type_depth;
     for (int i = 0; i < saved_type_depth; i++) {
         comp->type_stack[i] = saved_type_stack[i];
@@ -1510,12 +1621,58 @@ static bool compile_rbracket(compiler_t* comp) {
     encode_primitive(comp->blob, fromr_prim->prim_id);
 
     /* Update type stack: remove all elements, push array pointer */
+    /* First, collect node_ids from array elements (for parent→child edges) */
+    node_id_t child_nodes[MAX_TYPE_STACK];
+    int child_count = 0;
+
+    fprintf(stderr, "TRACE: compile_rbracket collecting child nodes, ref_graph=%p\n", (void*)comp->ref_graph);
+    fflush(stderr);
+
+    if (comp->ref_graph) {
+        for (int i = marker_depth; i < comp->type_stack_depth; i++) {
+            node_id_t child_node = comp->type_stack[i].node_id;
+            if (child_node != NODE_ID_INVALID) {
+                child_nodes[child_count++] = child_node;
+            }
+        }
+        fprintf(stderr, "TRACE: collected %d child nodes\n", child_count);
+        fflush(stderr);
+    }
+
+    fprintf(stderr, "TRACE: compile_rbracket resetting stack depth from %d to %d\n", comp->type_stack_depth, marker_depth);
+    fflush(stderr);
+
     comp->type_stack_depth = marker_depth;
+
+    fprintf(stderr, "TRACE: compile_rbracket calling push_heap_value\n");
+    fflush(stderr);
+
+    /* TEMPORARILY REVERT TO ORIGINAL push_type FOR TESTING */
     push_type(comp, TYPE_ARRAY);
+    // push_heap_value(comp, TYPE_ARRAY);
+
+    fprintf(stderr, "TRACE: compile_rbracket push_type returned\n");
+    fflush(stderr);
+
+    /* Establish parent→child edges for nested structures */
+    if (comp->ref_graph && child_count > 0) {
+        node_id_t array_node = comp->type_stack[marker_depth].node_id;
+        if (array_node != NODE_ID_INVALID) {
+            for (int i = 0; i < child_count; i++) {
+                ref_graph_add_child(comp->ref_graph, array_node, child_nodes[i]);
+            }
+            if (comp->verbose) {
+                printf("  ] established %d parent→child edges\n", child_count);
+            }
+        }
+    }
 
     if (comp->verbose) {
         printf("  ] created array of %d elements → array\n", elem_count);
     }
+
+    fprintf(stderr, "TRACE: compile_rbracket returning true\n");
+    fflush(stderr);
 
     return true;
 }
@@ -2153,13 +2310,22 @@ static bool compile_false(compiler_t* comp) {
  *   then ;
  */
 static bool compile_drop(compiler_t* comp) {
+    fprintf(stderr, "TRACE: compile_drop() entry\n");
+    fflush(stderr);
+
     if (comp->type_stack_depth < 1) {
         fprintf(stderr, "drop: stack underflow\n");
         return false;
     }
 
+    fprintf(stderr, "TRACE: compile_drop() about to pop\n");
+    fflush(stderr);
+
     /* Pop compile-time stack entry (just removes from type stack) */
     pop_type_entry(comp);
+
+    fprintf(stderr, "TRACE: compile_drop() popped, looking up primitive\n");
+    fflush(stderr);
 
     /* Note: In slot model, we don't free here. Slots stay allocated
      * until word end and are freed if not returned. */
@@ -2171,12 +2337,18 @@ static bool compile_drop(compiler_t* comp) {
         return false;
     }
 
+    fprintf(stderr, "TRACE: compile_drop() emitting code\n");
+    fflush(stderr);
+
     cell_buffer_append(comp->cells, encode_xt(drop_prim->addr));
     encode_primitive(comp->blob, drop_prim->prim_id);
 
     if (comp->verbose) {
         printf("  XT drop\n");
     }
+
+    fprintf(stderr, "TRACE: compile_drop() success\n");
+    fflush(stderr);
 
     return true;
 }

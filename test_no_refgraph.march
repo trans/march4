@@ -1,0 +1,7 @@
+: test-num
+  42
+;
+
+: main
+  test-num
+;

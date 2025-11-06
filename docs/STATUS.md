@@ -1,5 +1,78 @@
 # March Development Log
 
+## 2024-11-05 - Reference Graph Phase 2: Graph Building & Liveness Analysis (BLOCKED)
+
+**Session Focus:** Implementing graph building operations, liveness analysis, and FREE emission for compile-time memory management.
+
+**✅ Phase 2 Implementation COMPLETE:**
+1. **ref_graph lifecycle management** - Create/free per word in `word_compile_with_context()`
+2. **Node tracking** - Added `node_id` to `type_stack_entry_t`, `slot_id` to `ref_node_t`
+3. **Array allocation tracking** - Modified `compile_rbracket()` to call `push_heap_value()` which creates nodes
+4. **Parent→child edge tracking** - Collect child node_ids before popping elements, establish edges
+5. **Liveness analysis** - Mark-sweep reachability in `emit_free_for_dead_nodes()`
+6. **FREE emission** - Emit FREE instructions for dead (unreachable) nodes
+
+**🐛 CRITICAL BUG FOUND (Pre-existing):**
+- **Array execution completely broken** - even simple `[ 1 2 3 ]` crashes with segfault
+- Crash occurs during RUNTIME execution (Phase: execute, Token: ])
+- **Verified NOT caused by Phase 2 code** - tested on clean main branch, same crash
+- Blocks all Phase 2 testing since arrays are the primary use case
+- Simple non-array code works fine (tested `42` successfully)
+
+**🔧 Bug Fixed During Session:**
+- **ref_graph save/restore bug** - Nested compilation overwrote parent's ref_graph
+- When compiling `main` → calls `test-simple` → overwrites main's ref_graph → freed on return → main has NULL
+- **Fix:** Save/restore `ref_graph` in `word_compile_with_context()` (like cells, blob, type_stack)
+
+**📊 Investigation Findings:**
+1. Node allocation works correctly: "Successfully added node_id=1, graph now has 1 nodes"
+2. Liveness analysis runs correctly (when nodes present)
+3. Save/restore fix confirmed: both nested calls now have valid ref_graphs
+4. Crash happens AFTER compilation succeeds - during loader/runtime execution
+5. Crash location: Token ']', Type stack depth: 3
+
+**Files Modified:**
+- `src/types.h` - Added `slot_id` to `ref_node_t`, `node_id` to `type_stack_entry_t`
+- `src/refgraph.c` - Updated `ref_graph_alloc_node()` signature, added verbose traces
+- `src/compiler.c` - Save/restore ref_graph, liveness analysis, debug traces (kept for debugging)
+
+**Files Created:**
+- `test_refgraph_simple.march` - Simple array test (currently crashes)
+- `test_no_refgraph.march` - Simple integer test (works)
+
+**Current State:**
+- Phase 2 code compiles cleanly
+- Architecture is sound and complete
+- **BLOCKED:** Cannot test until array runtime bug is fixed
+- Debug traces left in place for array debugging
+
+**Next Steps (CRITICAL PATH):**
+1. **FIX ARRAY RUNTIME BUG** - Must be addressed before any further progress
+   - Investigate why `[ 1 2 3 ]` crashes during execution
+   - Likely in VM/loader/runner, not compiler
+   - Use debug traces to pinpoint exact failure
+2. **Test Phase 2** - Once arrays work, verify:
+   - Nodes created for array allocations
+   - Parent→child edges established correctly
+   - Liveness analysis marks live nodes
+   - FREE emitted for dead nodes
+   - Runtime executes FREEs without crashing
+3. **Phase 3** - After Phase 2 validated, add:
+   - Nested structure tests
+   - Extraction tests (parent consumed, child retained)
+   - Escaped reference tests
+
+**Open Questions:**
+- When did arrays break? (Bisect git history to find regression)
+- Is this a loader issue? Runner issue? VM issue?
+- Are there ANY working array tests we can use as reference?
+
+**References:**
+- Phase 2 plan: docs/design/REFGRAPH-IMPLEMENTATION.md
+- Memory management design: docs/design/MEMORY-MANAGEMENT.md
+
+---
+
 ## 2024-11-04 - Reference Graph Phase 1: Zero-Overhead Memory Management Foundation
 
 **Session Focus:** Implementing compile-time reference graph memory management for automatic, zero-overhead deallocation of nested heap structures.
