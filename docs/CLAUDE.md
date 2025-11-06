@@ -1,4 +1,4 @@
-# March 
+# March
 
 VERSION: α₄
 
@@ -24,13 +24,24 @@ Literals are encoded (serialized) and and stored with a CID as well.
 
 I am running CahyOS Liunx on Intel Core Ultra 7. (Obviously our first target architecture.)
 
-The core model is essentially FORTH. 
+The core model is essentially FORTH.
 
 There is a data stack and a return stack.
 
 A program is read from the database and "stiched" together, in much the sam way as FORTH reads from a token stream.
 
-See DESIGN.md document for details.
+## Key Files
 
-Also see SYNTAX.md document.
+- docs/STATUS.md     - Current working status
+- docs/PROGRESS.md   - List of implemented features
+- docs/design/*.md   - Various Design Documents
+- docs/planning/*.md - Various Planning Documents
 
+And docs/STATUS.md is the current status of work being done. This is an important file!
+It allows AI to better communicate with itself across new sessions.
+
+The docs/PROGRESS.md file is a supposed to be a comprehensive list of implemented features.
+
+Design documents are intended to explain the current thinking on how a particular aspect of the system is supposed to work. (They can get a out-of-date some if implmentation forces new decisions.)
+
+Planning documents are overviews, implementation strategy notes and additional considerations. They also generally include the current progress on that particular plan.

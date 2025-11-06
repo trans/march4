@@ -1,7 +1,7 @@
 # Reference Graph Memory Management - Design Document
 
 ## Overview
-Compile-time reference graph analysis with JIT-time deallocation decisions. Zero runtime overhead for memory management by tracking object relationships during compilation and emitting optimal deallocation code during JIT specialization.
+Compile-time reference graph analysis with compile-time (and JIT-time, if neccessary) deallocation decisions. Zero runtime overhead for memory management by tracking object relationships during compilation and emitting optimal deallocation code during compile-time (or JIT specialization).
 
 ## Core Concepts
 
@@ -145,13 +145,13 @@ JIT process:
 1. Compile word1:
    - Mini-graph: creates nodes A, B with edge A → B
    - Output: [RefNode(A)]
-   
+
 2. Compile word2:
    - Input expects: [RefNode(array_type)]
    - Calls word1 (inline or emit call)
    - Mini-graph: extracts child from input
    - Output: [RefNode(B)]
-   
+
 3. Stitch:
    - word1's output A matches word2's input requirement
    - Combine graphs: A → B relationship preserved
@@ -165,7 +165,7 @@ Immediate words execute at compile-time and manipulate the graph.
 Example: IMMEDIATE dup
   Compile-time graph update:
     stack.push(stack.top())  (duplicate top reference)
-  
+
   Emit runtime code:
     emit(DUP_INSTRUCTION)    (actual runtime dup operation)
 
@@ -279,14 +279,14 @@ Add a bullet in Key Operations:
 Short subsection:
 
 > Control flow inside words:
-> ReferenceGraph is maintained per basic block; stack and graph states are propagated along edges. At merges, we intersect liveness and union edges. 
+> ReferenceGraph is maintained per basic block; stack and graph states are propagated along edges. At merges, we intersect liveness and union edges.
 > Deallocation is only emitted where a node is dead on all outgoing paths.
 
 3. Ownership summary per word
 
 Under “Cross-Word Interaction”, add:
 
-> For each input slot, we compute whether the word consumes, retains, or escapes the referenced node. 
+> For each input slot, we compute whether the word consumes, retains, or escapes the referenced node.
 > This summary is stored alongside the mini-graph and used at JIT-time to stitch ownership correctly across calls.
 > Do we really need this? If we can do it all at compile time, we certainly dodn't need to pass ti along to the JIT.
 
@@ -331,7 +331,7 @@ Or better: `FREE_SLOT i` if you want to refer to “the object that was in slot 
 - No analysis
 - Just “call the allocator’s free on this handle”.
 
-In other words: the algorithm described under “Phase 2: JIT-Time” can be run on the word’s bytecode at compile time just as well. 
+In other words: the algorithm described under “Phase 2: JIT-Time” can be run on the word’s bytecode at compile time just as well.
 The JIT is only a consumer of the resulting annotated bytecode.
 
 Where a later JIT comes in is optional sugar:
@@ -386,5 +386,3 @@ So the change isn’t “replace SSA with graphs”, it’s “augment SSA slots
 ## Takeaway
 
 This design enables zero-overhead memory management through compile-time analysis and JIT-time code generation, avoiding runtime reference counting or garbage collection.
-
-

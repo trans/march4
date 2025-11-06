@@ -2,7 +2,7 @@
 
 THIS DOCUMENT IS PARTIALLY OUT OF DATE.
 
-WE FOUND A WAY TO NOT HAVE TO TYPE QUOTES TO PASS THEM (treat them just like words, which have to be rarfified by the JIT).
+WE FOUND A WAY TO HANDLE QUOTES WITHOUT HAVING TO TYPE THEM -- treat them just like words, which have to be rarfified by the JIT.
 
 ## Overview
 

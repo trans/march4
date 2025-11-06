@@ -1,8 +1,10 @@
-# QUOT_LITERAL Implementation Status
+# QUOT_LITERAL Plan
 
-## ✅ IMPLEMENTATION COMPLETE!
+## Progress
 
-## What's Done
+✅ IMPLEMENTATION COMPLETE!
+
+### What's Done
 - ✅ Type definitions added to `src/compiler.h`:
   - `quot_kind_t` enum (QUOT_LITERAL vs QUOT_TYPED)
   - Fields in `quotation_t`: `tokens`, `token_count`, `token_capacity`
@@ -28,11 +30,14 @@
   - Polymorphic `<` resolves correctly with type context from parent word
   - Compilation succeeds without errors!
 
-## What Was NOT Done (No Longer Needed)
+### What Was NOT Done (No Longer Needed)
 Current behavior: `( ... )` compiles tokens immediately into cells/blob
 Desired behavior: `( ... )` stores tokens, compiles later at use site with type context
 
-### Key Changes Needed:
+
+## Plan
+
+What needs to change:
 
 1. **compile_lparen()** (line ~325 in compiler.c)
    - Allocate `quot->tokens` array (start with capacity 16)
@@ -67,7 +72,8 @@ Desired behavior: `( ... )` stores tokens, compiles later at use site with type 
    - `compile_if()`: call quot_compile_with_context for both quots
    - Count-based `compile_times()`: already works (pops quot from stack)
 
-## Current Issue
+### Current Issues
+
 Quotations like `( 3 < )` fail to compile because:
 - Type stack is reset when entering quotation (line 365)
 - Polymorphic `<` has no concrete types to bind to
@@ -77,23 +83,23 @@ With QUOT_LITERAL:
 - When `times` calls quot_compile_with_context with parent type stack
 - Can resolve `<` to `i64 i64 -> bool` based on runtime stack
 
-## Test Cases to Try After Implementation
+### Test Cases to Try After Implementation
 ```march
 : test-until
   0                    # Initial value
   ( 5 < )              # Condition quot - uses stack value
-  ( 1 + )              # Body quot - modifies stack value  
+  ( 1 + )              # Body quot - modifies stack value
   times
 ;
 ```
 
 Should compile to until-style loop that counts 0→5.
 
-## Files to Modify
+### Files to Modify
 - `src/compiler.c`: compile_lparen, compile_rparen, compile_definition, new quot_compile_with_context
 - `src/compiler.h`: Already updated with type definitions
 
-## Notes
+### Notes
 - `comp->quot_stack[]` holds quotations during compilation
 - `comp->buffer_stack_depth` tracks nesting (0 = root, >0 = inside quot)
 - Token capture needs to handle nested quotations correctly
